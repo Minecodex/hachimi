@@ -16,7 +16,7 @@ boundary.
 1. Windows is the first enforced backend. `ReadOnly` may run with an explicit degraded report;
    workspace writes and process execution fail closed unless the backend is attested.
 2. NSIS uses per-user installation. On first launch Hachimi atomically stages fixed-hash sidecars
-   and portable Git under the per-user data root, then the current user runs the setup helper
+   under the per-user data root, then the current user runs the setup helper
    without `runas`, UAC, a Windows Service, or system Git changes.
 3. The marker is not an attestation. Startup resolves the installed AppContainer identity and SID,
    verifies the policy version, creates an AppContainer process security context, and runs
@@ -34,7 +34,7 @@ boundary.
    rejected for the first release.
 7. `SandboxRuntimeManager` is the live readiness authority. Workbench can refresh, attest or repair;
    repair first restages the packaged Runtime, immediately narrows all enforcement flags, reruns the
-   per-user helper, then proves sidecar/managed-Git SHA-256 and all canaries. Workspace mutation,
+   per-user helper, then proves sidecar SHA-256 and all canaries. Workspace mutation,
    Process spawn, stdio MCP and broker startup are mutually exclusive with repair.
 8. A Run keeps its creation-time Sandbox snapshot, while every side effect intersects it with the
    current runtime report. Repair can narrow an active Run but cannot upgrade it.
@@ -60,3 +60,16 @@ canaries are original implementations. The refreshable setup orchestration in
 `crates/hachimi-sandbox/src/runtime_manager.rs` selectively adapts Codex setup-orchestrator control
 flow and is registered per file in the provenance ledger; it does not embed Codex Core or reuse
 Codex product prompts.
+
+## Amendment 2026-08-22: pinned MinGit removed in favor of system Git
+
+The per-user Runtime no longer stages a pinned MinGit distribution, and the managed-Git SHA-256
+manifest attestation is removed. Git operations resolve the system Git installation (>= 2.40) from
+fixed well-known locations before PATH, matching openai/codex `codex-rs/git-utils` @
+`4f39251a010a8bd7d692d25fb33832ff06f1635a`. The contract that restricted Workers receive an explicit
+absolute Git path and never resolve Git from their checkout directory is unchanged, as is the
+config-level hardening (disabled `core.hooksPath`, `GIT_OPTIONAL_LOCKS=0`, allowlisted environment).
+Rationale: the pinned binary and hash manifest only defended against tampering that requires
+administrator rights, and an administrator already owns the machine; the lookup-attack vector is
+closed by explicit-path injection. This also unblocks the macOS port (`docs/mac-plan/`), which has
+no MinGit equivalent.

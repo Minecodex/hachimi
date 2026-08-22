@@ -9,6 +9,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+#[cfg(windows)]
 use hachimi_process_policy::{ProcessPolicy, std_command};
 use hachimi_protocol::{
     SandboxBootstrapPhase, SandboxBootstrapState, SandboxCapabilityReport, SandboxReadiness,
@@ -302,9 +303,6 @@ fn run_per_user_setup(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .creation_flags(0x0800_0000);
-    if let Ok(git) = crate::trusted_git_executable() {
-        command.env("HACHIMI_MANAGED_GIT_EXECUTABLE", git);
-    }
     let output = command.output().map_err(|error| SandboxManagerError {
         code: "sandbox_setup_launch_failed",
         message: error.to_string(),

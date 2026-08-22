@@ -26,7 +26,7 @@ pub use setup::{
     GitMutationAcl, SandboxSetupMarker, deny_restricted_code_read, deny_restricted_code_write,
     grant_restricted_code_access, install_sandbox_marker, prepare_git_mutation_acl,
     prepare_workspace_acl, restore_git_mutation_acl, revoke_restricted_code_access,
-    set_managed_git_executable, trusted_git_executable, uninstall_sandbox,
+    set_trusted_git_executable, trusted_git_executable, uninstall_sandbox,
 };
 
 use std::path::Path;

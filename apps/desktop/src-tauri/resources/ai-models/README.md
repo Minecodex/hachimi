@@ -12,7 +12,7 @@ The complete runtime files are versioned in the repository. Large ONNX files use
 Git LFS, so install Git LFS and run `git lfs pull` after cloning. The build
 verifies every packaged file against the pinned manifest before compiling.
 
-Run `scripts/prepare-speech-models.ps1` from the repository root only to repair
+Run `scripts/prepare-speech-models.mjs` from the repository root only to repair
 missing or corrupt files from checksum-verified official archives. Do not
 manually rename model files: the Rust runtime uses the stable paths documented
 above.

@@ -1055,6 +1055,8 @@ fn native_window_handle<R: Runtime>(
     _window: &WebviewWindow<R>,
 ) -> Result<usize, EmbeddedBrowserError> {
     Err(EmbeddedBrowserError::StartFailed(
-        "CEF native embedding is only enabled on Windows x64".into(),
+        "CEF native embedding is not available on this platform yet \
+         (docs/mac-plan/phase-4-cef-embedded-browser.md)"
+            .into(),
     ))
 }

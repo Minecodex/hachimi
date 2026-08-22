@@ -94,19 +94,30 @@ export function TerminalPanel(props: {
     try {
       let launch = sharedAutomaticStart ? automaticStarts.get(key) : undefined;
       if (!launch) {
-        launch = props.commandPort.spawnProcess({
-          context: directUserMutationContext(),
-          sessionId: props.snapshot.session.id,
-          checkoutId: currentCheckout,
-          command: ["powershell.exe"],
-          tty: true,
-          streamStdin: true,
-          streamOutput: true,
-          outputBytesCap: 2 * 1024 * 1024,
-          timeoutMs: null,
-          environment: {},
-          size: { rows: 24, cols: 100 },
-        });
+        // The shell lookup awaits, so wrap spawn in one promise and cache it
+        // synchronously; a second mount must observe the same launch.
+        launch = (async () => {
+          let command = ["powershell.exe"];
+          try {
+            const shell = await props.commandPort.getDefaultShell?.();
+            if (shell && shell.length > 0) command = shell;
+          } catch {
+            // Keep the fallback shell when the host command is unavailable.
+          }
+          return props.commandPort.spawnProcess({
+            context: directUserMutationContext(),
+            sessionId: props.snapshot.session.id,
+            checkoutId: currentCheckout,
+            command,
+            tty: true,
+            streamStdin: true,
+            streamOutput: true,
+            outputBytesCap: 2 * 1024 * 1024,
+            timeoutMs: null,
+            environment: {},
+            size: { rows: 24, cols: 100 },
+          });
+        })();
         if (sharedAutomaticStart) automaticStarts.set(key, launch);
       }
       const record = await launch;

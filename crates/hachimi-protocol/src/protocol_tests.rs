@@ -108,8 +108,10 @@ fn default_appearance_is_valid_and_resolves_to_a_builtin_theme() {
 
 #[test]
 fn appearance_rejects_unknown_active_theme() {
-    let mut appearance = AppearanceConfig::default();
-    appearance.active_theme_id = "not-a-theme".into();
+    let appearance = AppearanceConfig {
+        active_theme_id: "not-a-theme".into(),
+        ..Default::default()
+    };
     assert!(appearance.validate().is_err());
 }
 

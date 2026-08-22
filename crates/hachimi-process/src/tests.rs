@@ -26,14 +26,21 @@ fn record(root: &Path, interactive: bool, output_limit: u64) -> ProcessSessionRe
     }
 }
 
-fn powershell(command: &str) -> Vec<String> {
-    vec![
-        "powershell.exe".into(),
-        "-NoProfile".into(),
-        "-NonInteractive".into(),
-        "-Command".into(),
-        command.into(),
-    ]
+fn shell_script(command: &str) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        vec![
+            "powershell.exe".into(),
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-Command".into(),
+            command.into(),
+        ]
+    }
+    #[cfg(not(windows))]
+    {
+        vec!["/bin/sh".into(), "-c".into(), command.into()]
+    }
 }
 
 fn spec(root: &Path, command: Vec<String>, tty: bool, output_limit: usize) -> ProcessLaunchSpec {
@@ -58,18 +65,17 @@ fn spec(root: &Path, command: Vec<String>, tty: bool, output_limit: usize) -> Pr
     }
 }
 
-#[cfg(windows)]
 #[tokio::test]
 async fn pipe_output_is_byte_bounded_and_replayable() {
+    let script = if cfg!(windows) {
+        "[Console]::Out.Write('abcde'); [Console]::Error.Write('12345')"
+    } else {
+        "printf abcde; printf 12345 1>&2"
+    };
     let root = tempfile::tempdir().unwrap();
     let registry = ProcessRegistry::default();
     let launched = registry
-        .spawn(spec(
-            root.path(),
-            powershell("[Console]::Out.Write('abcde'); [Console]::Error.Write('12345')"),
-            false,
-            3,
-        ))
+        .spawn(spec(root.path(), shell_script(script), false, 3))
         .await
         .unwrap();
     let snapshot = loop {
@@ -92,18 +98,17 @@ async fn pipe_output_is_byte_bounded_and_replayable() {
     assert_eq!(snapshot.process.status, ProcessStatus::Exited);
 }
 
-#[cfg(windows)]
 #[tokio::test]
 async fn pty_supports_stdin_resize_and_idempotent_write() {
+    let script = if cfg!(windows) {
+        "$line=[Console]::In.ReadLine(); [Console]::Out.Write(('echo:' + $line))"
+    } else {
+        "IFS= read -r line; printf 'echo:%s' \"$line\""
+    };
     let root = tempfile::tempdir().unwrap();
     let registry = ProcessRegistry::default();
     let launched = registry
-        .spawn(spec(
-            root.path(),
-            powershell("$line=[Console]::In.ReadLine(); [Console]::Out.Write(('echo:' + $line))"),
-            true,
-            4096,
-        ))
+        .spawn(spec(root.path(), shell_script(script), true, 4096))
         .await
         .unwrap();
     registry
@@ -117,7 +122,12 @@ async fn pty_supports_stdin_resize_and_idempotent_write() {
         )
         .await
         .unwrap();
-    let input = STANDARD.encode(b"hello\r\n");
+    let newline = if cfg!(windows) {
+        "hello\r\n"
+    } else {
+        "hello\n"
+    };
+    let input = STANDARD.encode(newline);
     registry
         .write_base64(
             &ClientId("workbench".into()),
@@ -158,7 +168,6 @@ async fn pty_supports_stdin_resize_and_idempotent_write() {
     assert_eq!(text.matches("echo:hello").count(), 1);
 }
 
-#[cfg(windows)]
 #[tokio::test]
 async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command() {
     async fn write(
@@ -260,17 +269,35 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
         "expected-cwd",
     )
     .expect("terminal cwd marker");
-    let registry = ProcessRegistry::default();
-    let mut launch = spec(
-        root.path(),
+    let launch_command: Vec<String> = if cfg!(windows) {
         vec![
             "powershell.exe".into(),
             "-NoLogo".into(),
             "-NoProfile".into(),
-        ],
-        true,
-        64 * 1024,
-    );
+        ]
+    } else {
+        vec!["/bin/sh".into(), "-i".into()]
+    };
+    let cwd_probe: &[u8] = if cfg!(windows) {
+        b"$value = Get-Content -Raw -LiteralPath '.hachimi-direct-terminal-cwd'; Write-Output ('cwd:' + $value)\r"
+    } else {
+        b"echo cwd:$(cat .hachimi-direct-terminal-cwd)\n"
+    };
+    let foreground: &[u8] = if cfg!(windows) {
+        b"ping.exe -t 127.0.0.1\r"
+    } else {
+        b"while true; do echo tick; sleep 1; done\n"
+    };
+    let foreground_needle = if cfg!(windows) { "TTL=" } else { "tick" };
+    let after_interrupt: &[u8] = if cfg!(windows) {
+        b"Write-Output ('interrupt' + '-ok')\r"
+    } else {
+        b"echo interrupt-ok\n"
+    };
+    let exit_command: &[u8] = if cfg!(windows) { b"exit\r" } else { b"exit\n" };
+
+    let registry = ProcessRegistry::default();
+    let mut launch = spec(root.path(), launch_command, true, 64 * 1024);
     launch.cwd = root.path().canonicalize().expect("canonical terminal root");
     launch.environment = std::env::vars().collect();
     launch.timeout = Some(Duration::from_secs(30));
@@ -280,13 +307,7 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
     let mut output = Vec::new();
 
     let result = async {
-        write(
-            &registry,
-            &process_id,
-            "cwd",
-            b"$value = Get-Content -Raw -LiteralPath '.hachimi-direct-terminal-cwd'; Write-Output ('cwd:' + $value)\r",
-        )
-        .await?;
+        write(&registry, &process_id, "cwd", cwd_probe).await?;
         read_until(
             &registry,
             &process_id,
@@ -296,17 +317,18 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
         )
         .await?;
 
-        write(&registry, &process_id, "ping", b"ping.exe -t 127.0.0.1\r").await?;
-        read_until(&registry, &process_id, &mut after, &mut output, "TTL=").await?;
-        write(&registry, &process_id, "interrupt", b"\x03").await?;
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        write(
+        write(&registry, &process_id, "ping", foreground).await?;
+        read_until(
             &registry,
             &process_id,
-            "after-interrupt",
-            b"Write-Output ('interrupt' + '-ok')\r",
+            &mut after,
+            &mut output,
+            foreground_needle,
         )
         .await?;
+        write(&registry, &process_id, "interrupt", b"\x03").await?;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        write(&registry, &process_id, "after-interrupt", after_interrupt).await?;
         read_until(
             &registry,
             &process_id,
@@ -315,7 +337,7 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
             "interrupt-ok",
         )
         .await?;
-        write(&registry, &process_id, "exit", b"exit\r").await?;
+        write(&registry, &process_id, "exit", exit_command).await?;
         wait_until_closed(&registry, &process_id, &mut after, &mut output).await
     }
     .await;
@@ -328,17 +350,16 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
     assert!(result.is_ok(), "{}", result.unwrap_err());
 }
 
-#[cfg(windows)]
 #[tokio::test]
 async fn duplicate_handle_and_detached_ttl_fail_closed() {
+    let script = if cfg!(windows) {
+        "Start-Sleep -Seconds 30"
+    } else {
+        "sleep 30"
+    };
     let root = tempfile::tempdir().unwrap();
     let registry = ProcessRegistry::default();
-    let launch = spec(
-        root.path(),
-        powershell("Start-Sleep -Seconds 30"),
-        false,
-        1024,
-    );
+    let launch = spec(root.path(), shell_script(script), false, 1024);
     let launched = registry.spawn(launch.clone()).await.unwrap();
     assert!(matches!(
         registry.spawn(launch).await,
@@ -366,7 +387,9 @@ async fn terminal_conpty_uses_the_restricted_launcher_and_kills_its_process_tree
 
     let mut echo = spec(
         root.path(),
-        powershell("$line=[Console]::In.ReadLine(); [Console]::Out.Write(('restricted:' + $line))"),
+        shell_script(
+            "$line=[Console]::In.ReadLine(); [Console]::Out.Write(('restricted:' + $line))",
+        ),
         true,
         4096,
     );
@@ -422,7 +445,7 @@ async fn terminal_conpty_uses_the_restricted_launcher_and_kills_its_process_tree
     let command = format!(
         "$child=Start-Process powershell.exe -PassThru -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 3; Set-Content -LiteralPath \"{escaped_marker}\" -Value escaped'; Start-Sleep -Seconds 30"
     );
-    let mut tree = spec(root.path(), powershell(&command), false, 4096);
+    let mut tree = spec(root.path(), shell_script(&command), false, 4096);
     tree.restricted_launcher = Some(launcher);
     let tree = registry.spawn(tree).await.expect("restricted tree");
     tokio::time::sleep(Duration::from_millis(500)).await;

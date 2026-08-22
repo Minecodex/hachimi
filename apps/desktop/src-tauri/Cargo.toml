@@ -57,7 +57,7 @@ sha2.workspace = true
 specta.workspace = true
 sqlx.workspace = true
 rfd.workspace = true
-tauri = { workspace = true, features = ["tray-icon"] }
+tauri = { workspace = true, features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-notification.workspace = true
 tauri-plugin-single-instance.workspace = true
 tauri-runtime.workspace = true

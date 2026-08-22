@@ -93,11 +93,46 @@ impl ThemeProfile {
     #[must_use]
     pub fn builtin_profiles() -> Vec<Self> {
         vec![
-            Self::builtin("px", "像素物语", ThemeScheme::Dark, "#FF6BA0", "#171030", "#F4EFFF"),
-            Self::builtin("crm", "奶油手帐", ThemeScheme::Light, "#FF8FAB", "#FDF3EA", "#5C4A44"),
-            Self::builtin("nya", "黑猫夜行", ThemeScheme::Dark, "#FFB64D", "#161110", "#F7EAD9"),
-            Self::builtin("tora", "橘猫咖啡", ThemeScheme::Light, "#FF8C2E", "#FFF4E6", "#5B3D24"),
-            Self::builtin("maho", "魔法星辰", ThemeScheme::Light, "#FF7AD9", "#F2EAFB", "#5A4666"),
+            Self::builtin(
+                "px",
+                "像素物语",
+                ThemeScheme::Dark,
+                "#FF6BA0",
+                "#171030",
+                "#F4EFFF",
+            ),
+            Self::builtin(
+                "crm",
+                "奶油手帐",
+                ThemeScheme::Light,
+                "#FF8FAB",
+                "#FDF3EA",
+                "#5C4A44",
+            ),
+            Self::builtin(
+                "nya",
+                "黑猫夜行",
+                ThemeScheme::Dark,
+                "#FFB64D",
+                "#161110",
+                "#F7EAD9",
+            ),
+            Self::builtin(
+                "tora",
+                "橘猫咖啡",
+                ThemeScheme::Light,
+                "#FF8C2E",
+                "#FFF4E6",
+                "#5B3D24",
+            ),
+            Self::builtin(
+                "maho",
+                "魔法星辰",
+                ThemeScheme::Light,
+                "#FF7AD9",
+                "#F2EAFB",
+                "#5A4666",
+            ),
         ]
     }
 

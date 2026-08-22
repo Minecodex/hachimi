@@ -16,7 +16,7 @@ OpenAI、Forge 与企业平台凭据只存 Windows Credential Manager。Staging 
 | `corepack pnpm release:artifact-manifest -- target/release-candidate`      | 对 MSI、NSIS、便携 ZIP、来源 registry、LICENSE/NOTICE 生成 SHA-256              | 本地可执行                       |
 | `corepack pnpm release:artifact-verify -- --root target/release-candidate` | 下载后重新哈希候选，拒绝 manifest、commit、version、来源或许可漂移              | 本地可执行                       |
 | `corepack pnpm test:staging:openai`                                        | 真实 OpenAI 与同次确定性故障 conformance                                        | 环境阻塞                         |
-| `corepack pnpm test:staging:forge`                                         | managed Git Host 与五个 Forge 环境                                              | 环境阻塞                         |
+| `corepack pnpm test:staging:forge`                                         | Git Host 与五个 Forge 环境                                                      | 环境阻塞                         |
 | `corepack pnpm test:staging:enterprise`                                    | 三个外部企业组织的 REST/Stream/长连接验证                                       | 环境阻塞                         |
 | `corepack pnpm test:staging:channels`                                      | 钉钉、飞书、企微 AI Bot、企微自建应用、微信 iLink 五个平台的文本/媒体/恢复 Gate | 环境阻塞                         |
 | `corepack pnpm release:evidence:verify`                                    | 聚合六类原始 `summary.json`，fail closed                                        | 本地聚合逻辑已验证；真实证据缺失 |
@@ -71,7 +71,7 @@ OpenAI、Forge 与企业平台凭据只存 Windows Credential Manager。Staging 
 }
 ```
 
-Git fetch/push 通过 `WorkspaceHostClient` 与固定 managed Git 执行，凭据由 GCM/SSH Agent 提供。Forge token 使用 Credential Manager。create/query/update/close/merge 使用产品 adapter；确定性 ledger 测试与真实 mutation 属于同一 Gate。传入的 Forge Approval 会重新校验 Session、Run generation、Tool call、参数哈希、一次性 scope、解析主体和过期时间，旧 Approval 不能复用于 merge。
+Git fetch/push 通过 `WorkspaceHostClient` 与固定解析的系统 Git 执行，凭据由 GCM/SSH Agent 提供。Forge token 使用 Credential Manager。create/query/update/close/merge 使用产品 adapter；确定性 ledger 测试与真实 mutation 属于同一 Gate。传入的 Forge Approval 会重新校验 Session、Run generation、Tool call、参数哈希、一次性 scope、解析主体和过期时间，旧 Approval 不能复用于 merge。
 
 每项还必须提供 `faultApiBaseUrl`，指向受保护的透明故障代理。代理把 mutation 完整转发到原 Forge 后丢弃响应，但继续放行只读查询；adapter 随后按 source/target、可见字段、状态和 source commit OID 做远端 reconciliation。只有精确匹配才确认成功，Create/Close/Merge 的 staging 测试还会断言本次结果确由未知响应恢复，避免把普通成功响应误算为故障验证。
 

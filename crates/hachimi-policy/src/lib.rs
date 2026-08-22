@@ -609,7 +609,8 @@ fn canonicalize_with_missing_suffix(path: &Path) -> Option<std::path::PathBuf> {
 }
 
 fn normalize_case(value: &str) -> String {
-    if cfg!(windows) {
+    // Default NTFS and APFS volumes are both case-insensitive.
+    if cfg!(any(windows, target_os = "macos")) {
         value.to_lowercase()
     } else {
         value.to_owned()

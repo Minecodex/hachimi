@@ -150,6 +150,11 @@ impl WorkerContext {
     async fn git_output(&self, arguments: &[&str]) -> Result<Vec<u8>, WorkspaceError> {
         let mut command = tokio_command(crate::git_program(), ProcessPolicy::HiddenCaptured);
         command
+            .arg("-c")
+            .arg(format!(
+                "core.hooksPath={}",
+                crate::git::DISABLED_HOOKS_PATH
+            ))
             .args(arguments)
             .current_dir(crate::restricted_process_cwd(&self.root))
             .env_clear()

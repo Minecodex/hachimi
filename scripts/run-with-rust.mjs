@@ -74,8 +74,9 @@ function verifyAndStageWindowsTestRuntime(workspaceRoot, runtimeDirectory) {
   }
 }
 
+const workspaceRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+
 if (process.platform === "win32") {
-  const workspaceRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
   const directMlRuntime = join(
     workspaceRoot,
     "apps",
@@ -107,6 +108,37 @@ if (process.platform === "win32") {
     childEnvironment.CARGO_BUILD_JOBS === undefined
   ) {
     childEnvironment.CARGO_BUILD_JOBS = "1";
+  }
+}
+
+if (process.platform === "darwin") {
+  const sherpaRuntime = join(
+    workspaceRoot,
+    "apps",
+    "desktop",
+    "src-tauri",
+    "resources",
+    "native",
+    "sherpa-onnx-1.13.4",
+    "darwin-arm64",
+  );
+  if (existsSync(join(sherpaRuntime, "libsherpa-onnx-c-api.dylib"))) {
+    // The dylibs use @rpath install names; the fallback path covers both the
+    // link step (via SHERPA_ONNX_LIB_DIR) and test executable loading.
+    childEnvironment.SHERPA_ONNX_LIB_DIR = sherpaRuntime;
+    childEnvironment.DYLD_FALLBACK_LIBRARY_PATH = `${sherpaRuntime}${delimiter}${childEnvironment.DYLD_FALLBACK_LIBRARY_PATH ?? ""}`;
+  }
+  // hachimi-cef-host is a Windows-only binary until the P4 macOS CEF port
+  // (docs/mac-plan/phase-4-cef-embedded-browser.md); nothing depends on it, so
+  // workspace-wide cargo invocations skip it on macOS.
+  if (rustTool === "cargo" && rustToolArguments.includes("--workspace")) {
+    // Insert before the `--` separator; anything after it belongs to rustc.
+    const separator = rustToolArguments.indexOf("--");
+    if (separator === -1) {
+      rustToolArguments.push("--exclude", "hachimi-cef-host");
+    } else {
+      rustToolArguments.splice(separator, 0, "--exclude", "hachimi-cef-host");
+    }
   }
 }
 

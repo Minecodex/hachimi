@@ -180,6 +180,8 @@ async function settle() {
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
+  // The launch chain includes the default-shell lookup tick.
+  await Promise.resolve();
 }
 
 beforeEach(() => {
@@ -253,6 +255,7 @@ describe("TerminalPanel", () => {
     const onClose = vi.fn();
     const port = {
       listProcesses: vi.fn(async () => []),
+      getDefaultShell: vi.fn(async () => ["powershell.exe"]),
       spawnProcess: vi
         .fn()
         .mockResolvedValueOnce(process("multi", 1))
@@ -338,6 +341,7 @@ describe("TerminalPanel", () => {
     });
     const port = {
       listProcesses: vi.fn(async () => []),
+      getDefaultShell: vi.fn(async () => ["powershell.exe"]),
       spawnProcess: vi.fn(() => launch),
       readProcess: vi.fn(async () => ({
         process: process("shared"),

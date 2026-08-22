@@ -262,8 +262,7 @@ try {
     }
 
     if (-not $SkipBuild) {
-        Invoke-Checked "corepack" @("pnpm", "runtime:prepare")
-        Invoke-Checked "corepack" @("pnpm", "build:installer")
+            Invoke-Checked "corepack" @("pnpm", "build:installer")
     }
     $tauriConfigPath = Join-Path $repoRoot "apps\desktop\src-tauri\tauri.conf.json"
     $tauriConfig = Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json

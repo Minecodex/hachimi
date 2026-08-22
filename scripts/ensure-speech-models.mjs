@@ -78,20 +78,13 @@ if (failures.length === 0) {
 }
 
 console.warn(`Speech models need preparation:\n- ${failures.join("\n- ")}`);
-const shell = process.platform === "win32" ? "powershell.exe" : "pwsh";
 const preparation = spawnSync(
-  shell,
-  [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    join(scriptsDirectory, "prepare-speech-models.ps1"),
-  ],
+  process.execPath,
+  [join(scriptsDirectory, "prepare-speech-models.mjs")],
   { cwd: workspaceRoot, stdio: "inherit", windowsHide: true },
 );
 if (preparation.error) {
-  throw new Error(`Unable to start ${shell}: ${preparation.error.message}`);
+  throw new Error(`Unable to start prepare-speech-models.mjs: ${preparation.error.message}`);
 }
 if (preparation.status !== 0) {
   throw new Error(`Speech model preparation failed with exit code ${preparation.status}.`);

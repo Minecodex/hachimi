@@ -763,18 +763,66 @@ fn open_path_in_folder(path: &str) -> std::io::Result<()> {
         .map(|_| ())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn open_url_with_system_handler(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn open_path_in_folder(path: &str) -> std::io::Result<()> {
+    let path = std::path::Path::new(path);
+    if !path.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "downloaded file no longer exists",
+        ));
+    }
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(all(unix, not(any(windows, target_os = "macos"))))]
+fn open_url_with_system_handler(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(all(unix, not(any(windows, target_os = "macos"))))]
+fn open_path_in_folder(path: &str) -> std::io::Result<()> {
+    let path = std::path::Path::new(path);
+    if !path.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "downloaded file no longer exists",
+        ));
+    }
+    let parent = path.parent().unwrap_or(path);
+    std::process::Command::new("xdg-open")
+        .arg(parent)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(not(any(unix, windows)))]
 fn open_url_with_system_handler(_url: &str) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "system browser integration is only enabled on Windows",
+        "system browser integration is unsupported on this OS",
     ))
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(unix, windows)))]
 fn open_path_in_folder(_path: &str) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "download folder integration is only enabled on Windows",
+        "download folder integration is unsupported on this OS",
     ))
 }

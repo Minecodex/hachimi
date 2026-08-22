@@ -52,22 +52,12 @@ try {
     foreach ($resourceDirectory in @("resources", "cef-runtime", "browser-extension", "plugins")) {
         Copy-Item -LiteralPath (Join-Path $releaseRoot $resourceDirectory) -Destination $stageRoot -Recurse
     }
-    Copy-Item -LiteralPath (Join-Path $repoRoot "apps\desktop\src-tauri\managed-git") -Destination $stageRoot -Recurse
     Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination $stageRoot
     Copy-Item -LiteralPath (Join-Path $repoRoot "NOTICE.md") -Destination $stageRoot
     Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\reset-portable-data.ps1") -Destination $stageRoot
     Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\reset-portable-data.cmd") -Destination $stageRoot
     Copy-Item -LiteralPath (Join-Path $repoRoot "scripts\setup-portable-sandbox.ps1") -Destination $stageRoot
     New-Item -ItemType File -Path (Join-Path $stageRoot "hachimi.portable") -Force | Out-Null
-
-    $managedGitManifest = Join-Path $stageRoot "managed-git\manifest.json"
-    $managedGitExecutable = Join-Path $stageRoot "managed-git\cmd\git.exe"
-    if (-not (Test-Path -LiteralPath $managedGitManifest -PathType Leaf)) {
-        throw "Portable package is missing managed-git/manifest.json"
-    }
-    if (-not (Test-Path -LiteralPath $managedGitExecutable -PathType Leaf)) {
-        throw "Portable package is missing managed-git/cmd/git.exe"
-    }
 
     Compress-Archive -LiteralPath $stageRoot -DestinationPath $archivePath -CompressionLevel Optimal
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -87,9 +77,7 @@ try {
             "Hachimi/plugins/feishu/channels/feishu.json",
             "Hachimi/plugins/wecom_app/channels/wecom_app.json",
             "Hachimi/plugins/wecom_ai_bot/channels/wecom_ai_bot.json",
-            "Hachimi/plugins/wechat_ilink/channels/wechat_ilink.json",
-            "Hachimi/managed-git/manifest.json",
-            "Hachimi/managed-git/cmd/git.exe"
+            "Hachimi/plugins/wechat_ilink/channels/wechat_ilink.json"
         )) {
             if (-not $entryNames.Contains($requiredEntry)) {
                 throw "Portable archive is missing $requiredEntry"

@@ -34,3 +34,11 @@ Channel ingress must survive app or login restarts without installing machine-wi
 - Workspace, AppServer and Gateway remain local per-user processes without a Windows Service.
   Production Channel adapters are limited to WeCom, DingTalk and Feishu and must preserve this
   local Gateway boundary.
+
+## Amendment 2026-08-22: system Git replaces the portable Git runtime
+
+Decision 1's "portable Git" staging and Decision 2's "no system Git discovery" clause are superseded:
+Hachimi now resolves the system Git installation (>= 2.40, well-known locations before PATH) and no
+longer installs or attests a pinned MinGit runtime. Per-user installation, no-UAC operation, and the
+absence of machine-wide services are unchanged. See ADR-0001's same-day amendment for the threat-model
+rationale and the codex source registration.

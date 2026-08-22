@@ -8,9 +8,16 @@ describe("resolveLocalMarkdownPath", () => {
     expect(resolveLocalMarkdownPath("D:/repo/src/main.ts#L9", "D:\\repo")).toBe("src/main.ts");
   });
 
+  it("routes POSIX absolute paths inside the checkout", () => {
+    expect(resolveLocalMarkdownPath("/repo/src/main.ts:12", "/repo")).toBe("src/main.ts");
+    expect(resolveLocalMarkdownPath("/repo/src/main.ts#L9", "/repo")).toBe("src/main.ts");
+    expect(resolveLocalMarkdownPath("./src/main.ts", "/repo")).toBe("src/main.ts");
+  });
+
   it("rejects web links and paths outside the checkout", () => {
     expect(resolveLocalMarkdownPath("https://example.com/a.ts", "D:\\repo")).toBeUndefined();
     expect(resolveLocalMarkdownPath("D:/other/a.ts", "D:\\repo")).toBeUndefined();
+    expect(resolveLocalMarkdownPath("/other/a.ts", "/repo")).toBeUndefined();
     expect(resolveLocalMarkdownPath("../secret.txt", "D:\\repo")).toBeUndefined();
   });
 });

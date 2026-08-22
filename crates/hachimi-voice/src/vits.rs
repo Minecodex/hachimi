@@ -1664,7 +1664,6 @@ mod tests {
         );
     }
 
-    #[cfg(windows)]
     #[test]
     fn bundled_melo_model_completes_bilingual_inference() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
@@ -1690,7 +1689,6 @@ mod tests {
         assert!(!samples.is_empty());
     }
 
-    #[cfg(windows)]
     #[test]
     fn bundled_melo_model_warms_up_selected_backend() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
@@ -1720,7 +1718,6 @@ mod tests {
         assert!(!samples.is_empty());
     }
 
-    #[cfg(windows)]
     #[test]
     fn failed_model_warmup_restores_the_previous_runtime() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
@@ -1760,7 +1757,6 @@ mod tests {
         assert_eq!(state.backend, Some(VoiceComputeBackend::Cpu));
     }
 
-    #[cfg(windows)]
     #[test]
     #[ignore = "requires local archives listed in HACHIMI_TEST_VOICE_ARCHIVES"]
     fn imported_archives_complete_cpu_and_auto_warmup_with_selected_speaker() {

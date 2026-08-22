@@ -361,7 +361,10 @@ fn enterprise_server() -> (String, thread::JoinHandle<()>) {
         .expect("nonblocking enterprise listener");
     let address = listener.local_addr().expect("enterprise address");
     let server = thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        // The window refreshes after each served request: the two expected
+        // calls arrive well after fixture setup when the test binary is under
+        // parallel load, so a fixed creation-relative deadline races on macOS.
+        let mut deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let mut handled = 0;
         while handled < 2 && std::time::Instant::now() < deadline {
             let (mut stream, _) = match listener.accept() {
@@ -373,6 +376,16 @@ fn enterprise_server() -> (String, thread::JoinHandle<()>) {
                 Err(error) => panic!("enterprise request: {error}"),
             };
             handled += 1;
+            deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            // Accepted sockets inherit the listener's nonblocking mode on
+            // macOS/BSD; the fixture performs bounded blocking reads, so
+            // normalize the child socket before parsing HTTP.
+            stream
+                .set_nonblocking(false)
+                .expect("blocking enterprise stream");
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .expect("enterprise read timeout");
             let mut request = [0_u8; 4096];
             let size = stream.read(&mut request).expect("request bytes");
             let request = String::from_utf8_lossy(&request[..size]);

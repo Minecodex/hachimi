@@ -124,14 +124,14 @@ use hachimi_protocol::{
     AvatarImportInspection, AvatarRuntimeAsset, BootstrapState, CONTROL_PROTOCOL_VERSION,
     ClientContext, ClientId, ControlMethod, FrontendLogEntry, FrontendLogLevel, GitRefRecord,
     InteractionMotionBindingUpdateRequest, InteractiveRegionsUpdate, LipSyncCapability,
-    LlmSettingsInput, LlmSettingsView, LlmTestResult, Locale,
-    McpServerHealthRecord, McpServerRecord, McpServerUpsertRequest, McpServerView,
-    MotionAssetBindingsClearRequest, MotionBindingResetRequest, MotionCatalogSnapshot,
-    MotionEnabledUpdateRequest, MotionFeatureCacheReadRequest, MotionFeatureCacheWriteRequest,
-    MotionImportCommitRequest, MotionImportInspection, MotionMetadataUpdateRequest,
-    MotionRuntimeAsset, PetContextMenuRequest, PetTurnEvent, PetTurnRequest, PlanAcceptanceRequest,
-    ProjectId, ProjectRecord, ResourceEntryRequest, RunId, RunRecord, SETTINGS_SCHEMA_VERSION,
-    SessionId, SkillSubscriptionId, SpeechRecognitionRuntimeState, SpeechRecognitionSettingsInput,
+    LlmSettingsInput, LlmSettingsView, LlmTestResult, Locale, McpServerHealthRecord,
+    McpServerRecord, McpServerUpsertRequest, McpServerView, MotionAssetBindingsClearRequest,
+    MotionBindingResetRequest, MotionCatalogSnapshot, MotionEnabledUpdateRequest,
+    MotionFeatureCacheReadRequest, MotionFeatureCacheWriteRequest, MotionImportCommitRequest,
+    MotionImportInspection, MotionMetadataUpdateRequest, MotionRuntimeAsset, PetContextMenuRequest,
+    PetTurnEvent, PetTurnRequest, PlanAcceptanceRequest, ProjectId, ProjectRecord,
+    ResourceEntryRequest, RunId, RunRecord, SETTINGS_SCHEMA_VERSION, SessionId,
+    SkillSubscriptionId, SpeechRecognitionRuntimeState, SpeechRecognitionSettingsInput,
     VoiceCatalogSnapshot, VoiceImportCommitRequest, VoiceModelInspection, VoiceRuntimeState,
     VoiceSettingsInput, WindowPlacementV1, WorkbenchPlanAcceptanceSnapshot, WorkbenchRoute,
     WorkbenchSessionSnapshot, WorkbenchTaskSnapshot, WorkbenchTaskStartRequest,
@@ -1055,6 +1055,7 @@ fn main() {
             get_workspace_diff,
             read_workspace_diff_file,
             spawn_process,
+            get_default_shell,
             write_process_stdin,
             resize_process,
             terminate_process,
@@ -1355,15 +1356,31 @@ fn main() {
                     hachimi_protocol::SkillScope::System,
                 ),
             ];
-            if let Some(user_profile) = std::env::var_os("USERPROFILE") {
-                skill_catalog_roots.push(hachimi_skills::SkillCatalogRoot::new(
-                    PathBuf::from(user_profile).join(".agents/skills"),
-                    hachimi_protocol::SkillScope::User,
-                ));
+            #[cfg(windows)]
+            {
+                if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+                    skill_catalog_roots.push(hachimi_skills::SkillCatalogRoot::new(
+                        PathBuf::from(user_profile).join(".agents/skills"),
+                        hachimi_protocol::SkillScope::User,
+                    ));
+                }
+                if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+                    skill_catalog_roots.push(hachimi_skills::SkillCatalogRoot::new(
+                        PathBuf::from(program_data).join("Hachimi/skills"),
+                        hachimi_protocol::SkillScope::Admin,
+                    ));
+                }
             }
-            if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+            #[cfg(not(windows))]
+            {
+                if let Some(home) = std::env::var_os("HOME") {
+                    skill_catalog_roots.push(hachimi_skills::SkillCatalogRoot::new(
+                        PathBuf::from(home).join(".agents/skills"),
+                        hachimi_protocol::SkillScope::User,
+                    ));
+                }
                 skill_catalog_roots.push(hachimi_skills::SkillCatalogRoot::new(
-                    PathBuf::from(program_data).join("Hachimi/skills"),
+                    PathBuf::from("/Library/Application Support/Hachimi/skills"),
                     hachimi_protocol::SkillScope::Admin,
                 ));
             }

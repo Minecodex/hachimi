@@ -198,6 +198,7 @@ pub fn validate_checkout_alias_root(
     Err(PathSecurityError::UnsupportedRoot)
 }
 
+#[cfg(windows)]
 fn path_error_context(error: PathSecurityError, context: &'static str) -> PathSecurityError {
     match error {
         PathSecurityError::Io(source) => PathSecurityError::Io(std::io::Error::new(
@@ -344,6 +345,7 @@ fn reject_reparse_chain(
     Ok(())
 }
 
+#[cfg(windows)]
 fn reject_reparse(path: &Path) -> Result<(), PathSecurityError> {
     reject_metadata_reparse(&std::fs::symlink_metadata(path)?)
 }

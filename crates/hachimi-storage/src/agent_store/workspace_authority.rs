@@ -932,20 +932,32 @@ impl AgentStore {
 }
 
 fn validate_existing_path_chain(path: &Path) -> Result<(), String> {
+    // Canonicalize the deepest existing ancestor first: macOS mounts /var and
+    // /tmp as symlinks into /private, so validating the unresolved chain would
+    // reject every temporary or symlinked directory. The canonical chain is
+    // symlink-free by construction; what remains is the real location to check.
+    let mut missing = Vec::new();
     let mut cursor = path;
-    loop {
+    let mut resolved = loop {
         match std::fs::symlink_metadata(cursor) {
             Ok(metadata) => {
-                validate_workspace_metadata(cursor, &metadata)?;
                 if !metadata.is_dir() {
                     return Err(format!(
                         "workspace path is not a directory: {}",
                         cursor.display()
                     ));
                 }
-                break;
+                break cursor.canonicalize().map_err(|error| {
+                    format!(
+                        "workspace path cannot be resolved: {}: {error}",
+                        cursor.display()
+                    )
+                })?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(cursor.file_name().ok_or_else(|| {
+                    format!("workspace path has no existing parent: {}", path.display())
+                })?);
                 cursor = cursor.parent().ok_or_else(|| {
                     format!("workspace path has no existing parent: {}", path.display())
                 })?;
@@ -957,9 +969,18 @@ fn validate_existing_path_chain(path: &Path) -> Result<(), String> {
                 ));
             }
         }
+    };
+    for component in missing.iter().rev() {
+        resolved.push(component);
     }
 
-    for ancestor in cursor.ancestors().skip(1) {
+    // Only the existing canonical chain can be inspected; the missing tail is
+    // validated implicitly once it is created inside the verified ancestors.
+    let existing = resolved
+        .ancestors()
+        .nth(missing.len())
+        .unwrap_or(resolved.as_path());
+    for ancestor in existing.ancestors() {
         let metadata = std::fs::symlink_metadata(ancestor).map_err(|error| {
             format!(
                 "workspace path cannot inspect ancestor {}: {error}",
@@ -1001,9 +1022,21 @@ fn validate_selected_workspace_root(root: &Path) -> Result<PathBuf, String> {
     if !root.is_absolute() {
         return Err("selected directory must be an absolute path".into());
     }
-    let mut ancestors = root.ancestors().collect::<Vec<_>>();
-    ancestors.reverse();
-    for ancestor in ancestors {
+    // Canonicalize before validating: macOS mounts /var and /tmp as symlinks
+    // into /private, so the unresolved chain would falsely trip the symlink
+    // guard. The root itself must still be a real directory, not a symlink;
+    // its canonical ancestors are what get stored and validated.
+    let root_metadata = std::fs::symlink_metadata(root)
+        .map_err(|error| format!("selected directory is unavailable: {error}"))?;
+    if root_metadata.file_type().is_symlink() {
+        return Err(format!(
+            "selected directory traverses a symbolic link: {}",
+            root.display()
+        ));
+    }
+    let canonical = std::fs::canonicalize(root)
+        .map_err(|error| format!("selected directory is unavailable: {error}"))?;
+    for ancestor in canonical.ancestors() {
         let metadata = match std::fs::symlink_metadata(ancestor) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1031,6 +1064,5 @@ fn validate_selected_workspace_root(root: &Path) -> Result<PathBuf, String> {
             }
         }
     }
-    std::fs::canonicalize(root)
-        .map_err(|error| format!("selected directory is unavailable: {error}"))
+    Ok(canonical)
 }

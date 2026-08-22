@@ -148,7 +148,6 @@ $summary = [ordered]@{
 Push-Location $repoRoot
 try {
     Invoke-Checked "corepack" @("pnpm", "release:check-clean")
-    Invoke-Checked "corepack" @("pnpm", "runtime:prepare")
     if (-not $SkipBuild) {
         Invoke-Checked "corepack" @("pnpm", "build:installer")
     }

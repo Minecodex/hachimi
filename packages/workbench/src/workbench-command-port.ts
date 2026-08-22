@@ -109,6 +109,7 @@ export type WorkbenchCommandPort = Pick<
   | "getWorkspaceDiff"
   | "readWorkspaceDiffFile"
   | "spawnProcess"
+  | "getDefaultShell"
   | "writeProcessStdin"
   | "resizeProcess"
   | "terminateProcess"

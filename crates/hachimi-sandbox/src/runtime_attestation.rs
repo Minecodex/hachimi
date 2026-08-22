@@ -3,14 +3,9 @@
 // Commit: 4c43465133428898aa84f0bfc02c306ed65fb66a
 // Modified for Hachimi: AppContainer canaries and per-Run Checkout/Git/TEMP attestation.
 
-use std::{
-    io::Read,
-    path::{Component, Path, PathBuf},
-    process::Stdio,
-};
+use std::{io::Read, path::Path, path::PathBuf, process::Stdio};
 
 use hachimi_protocol::{SandboxCapabilityReport, SandboxReadiness};
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -221,12 +216,6 @@ pub(crate) fn attest_windows_runtime_with_integrity(
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct ManagedGitManifest {
-    version: String,
-    files: std::collections::BTreeMap<String, String>,
-}
-
 fn verify_managed_runtime(
     launcher: &Path,
     expected_integrity: &[(PathBuf, String)],
@@ -251,59 +240,7 @@ fn verify_managed_runtime(
             ));
         }
     }
-    let git_root = root.join("managed-git");
-    let manifest_path = git_root.join("manifest.json");
-    let manifest: ManagedGitManifest =
-        serde_json::from_slice(&std::fs::read(&manifest_path).map_err(|_| {
-            (
-                "sandbox_managed_git_missing",
-                "managed Git manifest is missing".into(),
-            )
-        })?)
-        .map_err(|_| {
-            (
-                "sandbox_managed_git_manifest_invalid",
-                "managed Git manifest is invalid".into(),
-            )
-        })?;
-    if manifest.version.trim().is_empty() || manifest.files.is_empty() {
-        return Err((
-            "sandbox_managed_git_manifest_invalid",
-            "managed Git manifest is incomplete".into(),
-        ));
-    }
-    for (relative, expected) in manifest.files {
-        let relative = safe_manifest_relative(&relative)?;
-        let path = git_root.join(relative);
-        if !hash_file(&path).is_ok_and(|actual| actual == expected) {
-            return Err((
-                "sandbox_managed_git_integrity_mismatch",
-                format!(
-                    "managed Git file failed SHA-256 attestation: {}",
-                    path.display()
-                ),
-            ));
-        }
-    }
     Ok(())
-}
-
-fn safe_manifest_relative(value: &str) -> Result<PathBuf, (&'static str, String)> {
-    let path = Path::new(value);
-    if path.as_os_str().is_empty()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return Err((
-            "sandbox_managed_git_manifest_invalid",
-            "managed Git manifest path escapes its Runtime".into(),
-        ));
-    }
-    Ok(path.to_owned())
 }
 
 fn hash_file(path: &Path) -> Result<String, std::io::Error> {
@@ -495,24 +432,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn managed_runtime_integrity_detects_sidecar_and_git_tampering() {
+    fn managed_runtime_integrity_detects_sidecar_tampering() {
         let root = tempfile::tempdir().expect("root");
         let launcher = root.path().join("hachimi-sandbox-launcher.exe");
         std::fs::write(&launcher, b"launcher").expect("launcher");
-        let git_root = root.path().join("managed-git");
-        std::fs::create_dir_all(git_root.join("cmd")).expect("git root");
-        let git = git_root.join("cmd/git.exe");
-        std::fs::write(&git, b"git").expect("git");
-        let git_hash = hash_file(&git).expect("git hash");
-        std::fs::write(
-            git_root.join("manifest.json"),
-            serde_json::to_vec(&serde_json::json!({
-                "version": "2.53.0",
-                "files": { "cmd/git.exe": git_hash }
-            }))
-            .expect("manifest"),
-        )
-        .expect("manifest file");
         let expected = vec![(
             launcher.clone(),
             hash_file(&launcher).expect("launcher hash"),
@@ -525,14 +448,6 @@ mod tests {
                 .expect_err("tamper must fail")
                 .0,
             "sandbox_runtime_integrity_mismatch"
-        );
-        std::fs::write(&launcher, b"launcher").expect("restore launcher");
-        std::fs::write(&git, b"tampered git").expect("tamper git");
-        assert_eq!(
-            verify_managed_runtime(&launcher, &expected)
-                .expect_err("Git tamper must fail")
-                .0,
-            "sandbox_managed_git_integrity_mismatch"
         );
     }
 }

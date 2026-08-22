@@ -1051,7 +1051,16 @@ mod tests {
         let redirect_uri = query.get("redirect_uri").expect("redirect URI").to_string();
         let state = query.get("state").expect("state").to_string();
         let callback = format!("{redirect_uri}?code=provider-code&state={state}");
-        let callback_response = reqwest::get(callback).await.expect("callback");
+        // The callback listener is always loopback; bypass proxies so machines
+        // with a system/ENV proxy do not route the callback away.
+        let callback_response = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("callback client")
+            .get(callback)
+            .send()
+            .await
+            .expect("callback");
         assert!(callback_response.status().is_success());
         let credential = login.wait().await.expect("credential");
         assert_eq!(

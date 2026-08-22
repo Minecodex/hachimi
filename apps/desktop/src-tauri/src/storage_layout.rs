@@ -117,19 +117,36 @@ pub(crate) fn resolve_storage_layout() -> StorageLayout {
         };
     }
 
-    let root = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| executable_dir.join("data"))
-        .join(APP_IDENTIFIER);
-    let webview_base = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| executable_dir.join("data-local"));
-    let webview = webview_base.join(APP_IDENTIFIER).join("EBWebView");
-    StorageLayout {
-        root,
-        webview,
-        mode: StorageMode::Installed,
-        redirect_webview: false,
+    if cfg!(target_os = "macos") {
+        // ~/Library/Application Support/com.hachimi.desktop; Wry/WebKit already
+        // keeps WKWebView data there, so no webview redirect is needed.
+        let root = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| executable_dir.clone())
+            .join("Library")
+            .join("Application Support")
+            .join(APP_IDENTIFIER);
+        StorageLayout {
+            webview: root.join("webview"),
+            root,
+            mode: StorageMode::Installed,
+            redirect_webview: false,
+        }
+    } else {
+        let root = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| executable_dir.join("data"))
+            .join(APP_IDENTIFIER);
+        let webview_base = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| executable_dir.join("data-local"));
+        let webview = webview_base.join(APP_IDENTIFIER).join("EBWebView");
+        StorageLayout {
+            root,
+            webview,
+            mode: StorageMode::Installed,
+            redirect_webview: false,
+        }
     }
 }
 
@@ -386,6 +403,7 @@ fn clear_managed_credentials() -> Result<(), String> {
         .map_err(|error| format!("failed to clear Hachimi credentials: {error}"))
 }
 
+#[cfg(any(windows, test))]
 fn is_managed_credential_target(target: &str) -> bool {
     const SERVICES: [&str; 7] = [
         "com.hachimi.desktop",

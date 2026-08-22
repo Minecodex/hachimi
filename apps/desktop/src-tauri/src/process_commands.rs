@@ -69,6 +69,23 @@ async fn dispatch_process(
 }
 
 #[tauri::command]
+pub(super) fn get_default_shell(window: WebviewWindow) -> Result<Vec<String>, CommandError> {
+    require_window(&window, "workbench")?;
+    #[cfg(windows)]
+    {
+        Ok(vec!["powershell.exe".into()])
+    }
+    #[cfg(not(windows))]
+    {
+        let shell = std::env::var("SHELL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "/bin/zsh".into());
+        Ok(vec![shell])
+    }
+}
+
+#[tauri::command]
 pub(super) async fn spawn_process(
     window: WebviewWindow,
     state: State<'_, DesktopState>,

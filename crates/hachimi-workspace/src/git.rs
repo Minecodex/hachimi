@@ -23,7 +23,7 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_GIT_OUTPUT: usize = 2 * 1024 * 1024;
 const MAX_PATHS: usize = 500;
 const MAX_COMMIT_MESSAGE: usize = 4_096;
-const DISABLED_HOOKS_PATH: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+pub(crate) const DISABLED_HOOKS_PATH: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 impl WorkerContext {
     pub(crate) async fn git_project_inspect(

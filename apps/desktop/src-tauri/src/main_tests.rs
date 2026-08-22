@@ -177,17 +177,19 @@ fn frontend_logs_are_bounded_and_secrets_are_redacted() {
 }
 #[test]
 fn debug_storage_is_kept_under_target_for_binaries_and_tests() {
+    let root = if cfg!(windows) {
+        Path::new(r"D:\workspace\hachimi")
+    } else {
+        Path::new("/workspace/hachimi")
+    };
+    let target = root.join("target");
     assert_eq!(
-        debug_data_root(Path::new(
-            r"D:\workspace\hachimi\target\debug\hachimi-desktop.exe"
-        )),
-        Some(PathBuf::from(r"D:\workspace\hachimi\target\hachimi-data"))
+        debug_data_root(&target.join("debug").join("hachimi-desktop")),
+        Some(target.join("hachimi-data"))
     );
     assert_eq!(
-        debug_data_root(Path::new(
-            r"D:\workspace\hachimi\target\debug\deps\hachimi-desktop.exe"
-        )),
-        Some(PathBuf::from(r"D:\workspace\hachimi\target\hachimi-data"))
+        debug_data_root(&target.join("debug").join("deps").join("hachimi-desktop")),
+        Some(target.join("hachimi-data"))
     );
 }
 #[test]

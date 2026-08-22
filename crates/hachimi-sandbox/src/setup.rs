@@ -12,7 +12,7 @@ use crate::appcontainer::{
 };
 use crate::runtime_attestation::SANDBOX_POLICY_VERSION;
 
-static MANAGED_GIT_EXECUTABLE: OnceLock<std::path::PathBuf> = OnceLock::new();
+static TRUSTED_GIT_EXECUTABLE: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,103 +107,166 @@ pub fn install_sandbox_marker(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TrustedGitRuntime {
     executable: std::path::PathBuf,
-    root: std::path::PathBuf,
 }
 
-/// Resolves only the pinned Git executable staged in Hachimi's per-user
-/// managed Runtime. System PATH is deliberately ignored.
+/// Minimum supported system Git version. Older releases lack the config
+/// surface Hachimi relies on (for example `core.hooksPath` hardening).
+const MINIMUM_GIT_VERSION: (u64, u64) = (2, 40);
+
+/// Resolves the trusted Git executable. Following openai/codex, Hachimi uses
+/// the system Git installation on every platform; lookup prefers fixed
+/// well-known locations over PATH and never consults the checkout directory.
 fn trusted_git_runtime() -> Result<Option<TrustedGitRuntime>, String> {
-    let candidate = MANAGED_GIT_EXECUTABLE
+    let candidate = TRUSTED_GIT_EXECUTABLE
         .get()
         .cloned()
-        .or_else(|| std::env::var_os("HACHIMI_MANAGED_GIT_EXECUTABLE").map(Into::into));
-    let Some(candidate) = candidate else {
-        return Ok(None);
-    };
-    if !candidate.is_absolute() || !candidate.is_file() {
-        return Err("managed Git executable is missing".into());
+        .or_else(|| std::env::var_os("HACHIMI_GIT_EXECUTABLE").map(Into::into));
+    if let Some(candidate) = candidate {
+        return validate_git_executable(&candidate)
+            .map(|executable| Some(TrustedGitRuntime { executable }));
     }
-    let executable = candidate
-        .canonicalize()
-        .map_err(|error| format!("could not canonicalize {}: {error}", candidate.display()))?;
-    let cmd = executable
-        .parent()
-        .filter(|path| {
-            path.file_name()
-                .is_some_and(|name| name.eq_ignore_ascii_case("cmd"))
-        })
-        .ok_or_else(|| "managed Git must use the cmd/git.exe layout".to_owned())?;
-    let root = cmd
-        .parent()
-        .filter(|path| {
-            path.file_name()
-                .is_some_and(|name| name.eq_ignore_ascii_case("managed-git"))
-        })
-        .ok_or_else(|| "Git executable is outside Hachimi managed-git".to_owned())?
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
-    if !root.join("manifest.json").is_file()
-        || !root
-            .parent()
-            .is_some_and(|runtime| runtime.join("runtime-manifest.json").is_file())
+    for candidate in well_known_git_candidates() {
+        if let Ok(executable) = validate_git_executable(&candidate) {
+            return Ok(Some(TrustedGitRuntime { executable }));
+        }
+    }
+    if let Some(candidate) = search_path_git()
+        && let Ok(executable) = validate_git_executable(&candidate)
     {
-        return Err("managed Git attestation manifests are missing".into());
+        return Ok(Some(TrustedGitRuntime { executable }));
     }
-    Ok(Some(TrustedGitRuntime { executable, root }))
+    Ok(None)
 }
 
-pub fn set_managed_git_executable(path: std::path::PathBuf) -> Result<(), String> {
-    let runtime = validate_managed_git(&path)?;
-    if let Some(existing) = MANAGED_GIT_EXECUTABLE.get() {
-        return if existing == &runtime.executable {
+/// Binds an explicit trusted Git executable (runtime registration, tests).
+pub fn set_trusted_git_executable(path: std::path::PathBuf) -> Result<(), String> {
+    let executable = validate_git_executable(&path)?;
+    if let Some(existing) = TRUSTED_GIT_EXECUTABLE.get() {
+        return if existing == &executable {
             Ok(())
         } else {
-            Err("managed Git executable was already initialized to another Runtime".into())
+            Err("trusted Git executable was already initialized to another path".into())
         };
     }
-    MANAGED_GIT_EXECUTABLE
-        .set(runtime.executable)
-        .map_err(|_| "managed Git executable was already initialized".into())
+    TRUSTED_GIT_EXECUTABLE
+        .set(executable)
+        .map_err(|_| "trusted Git executable was already initialized".into())
 }
 
-fn validate_managed_git(path: &Path) -> Result<TrustedGitRuntime, String> {
-    let previous = MANAGED_GIT_EXECUTABLE.get().cloned();
-    if previous.as_deref() == Some(path) {
-        return trusted_git_runtime()?.ok_or_else(|| "managed Git is unavailable".into());
+fn validate_git_executable(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    if !path.is_file() {
+        return Err(format!("Git executable is missing: {}", path.display()));
     }
     let executable = path
         .canonicalize()
-        .map_err(|error| format!("managed Git canonicalization failed: {error}"))?;
-    let cmd = executable
-        .parent()
-        .ok_or_else(|| "managed Git has no cmd directory".to_owned())?;
-    let root = cmd
-        .parent()
-        .ok_or_else(|| "managed Git has no Runtime root".to_owned())?;
-    if !cmd
-        .file_name()
-        .is_some_and(|name| name.eq_ignore_ascii_case("cmd"))
-        || !root
-            .file_name()
-            .is_some_and(|name| name.eq_ignore_ascii_case("managed-git"))
-        || !root.join("manifest.json").is_file()
-        || !root
-            .parent()
-            .is_some_and(|parent| parent.join("runtime-manifest.json").is_file())
-    {
-        return Err("managed Git path is outside the attested per-user Runtime".into());
+        .map_err(|error| format!("Git canonicalization failed: {error}"))?;
+    let output = hachimi_process_policy::std_command(
+        &executable,
+        hachimi_process_policy::ProcessPolicy::HiddenCaptured,
+    )
+    .arg("--version")
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .output()
+    .map_err(|error| format!("Git probe failed for {}: {error}", executable.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Git probe failed for {}: git --version exited with {}",
+            executable.display(),
+            output.status
+        ));
     }
-    let root = root.to_owned();
-    Ok(TrustedGitRuntime { executable, root })
+    let Some(version) = parse_git_version(&output.stdout) else {
+        return Err(format!(
+            "Git probe failed for {}: unrecognized version output",
+            executable.display()
+        ));
+    };
+    if version < MINIMUM_GIT_VERSION {
+        return Err(format!(
+            "Git {}.{} at {} is too old; Hachimi requires Git >= {}.{}",
+            version.0,
+            version.1,
+            executable.display(),
+            MINIMUM_GIT_VERSION.0,
+            MINIMUM_GIT_VERSION.1
+        ));
+    }
+    Ok(executable)
 }
 
-/// Returns the exact Git executable bound during Sandbox setup discovery.
-/// Restricted Workspace Workers receive this path explicitly and never resolve
-/// Git from their checkout current directory.
+fn parse_git_version(stdout: &[u8]) -> Option<(u64, u64)> {
+    let text = String::from_utf8_lossy(stdout);
+    let version = text.trim().strip_prefix("git version ")?;
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
+}
+
+#[cfg(windows)]
+fn well_known_git_candidates() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(root) = std::env::var_os(variable) {
+            candidates.push(Path::new(&root).join("Git").join("cmd").join("git.exe"));
+        }
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(
+            Path::new(&local)
+                .join("Programs")
+                .join("Git")
+                .join("cmd")
+                .join("git.exe"),
+        );
+    }
+    candidates
+}
+
+#[cfg(not(windows))]
+fn well_known_git_candidates() -> Vec<std::path::PathBuf> {
+    vec![std::path::PathBuf::from("/usr/bin/git")]
+}
+
+fn search_path_git() -> Option<std::path::PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    let names: &[&str] = if cfg!(windows) {
+        &["git.exe", "git"]
+    } else {
+        &["git"]
+    };
+    for directory in std::env::split_paths(&paths) {
+        for name in names {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// Returns the exact Git executable bound during setup or resolved from the
+/// system installation. Restricted Workspace Workers receive this path
+/// explicitly and never resolve Git from their checkout current directory.
 pub fn trusted_git_executable() -> Result<std::path::PathBuf, String> {
-    trusted_git_runtime()?
+    if let Some(executable) = TRUSTED_GIT_EXECUTABLE.get() {
+        return Ok(executable.clone());
+    }
+    let resolved = trusted_git_runtime()?
         .map(|runtime| runtime.executable)
-        .ok_or_else(|| "pinned Hachimi managed Git runtime is unavailable".to_owned())
+        .ok_or_else(|| {
+            "a system Git installation (>= 2.40) is required; install Git for Windows or the \
+             Xcode Command Line Tools and restart Hachimi"
+                .to_owned()
+        })?;
+    let _ = TRUSTED_GIT_EXECUTABLE.set(resolved);
+    TRUSTED_GIT_EXECUTABLE
+        .get()
+        .cloned()
+        .ok_or_else(|| "trusted Git executable cache failed".to_owned())
 }
 
 pub fn uninstall_sandbox(marker_path: &Path) -> Result<(), String> {
@@ -240,7 +303,12 @@ pub fn uninstall_sandbox(marker_path: &Path) -> Result<(), String> {
 
 pub fn grant_restricted_code_access(path: &Path, write: bool) -> Result<(), String> {
     if !cfg!(windows) {
-        return Err("restricted-code ACLs are only available on Windows".into());
+        // NTFS ACLs for the Restricted Code / AppContainer identities are a
+        // Windows enforcement artifact. The macOS Seatbelt backend (P2)
+        // expresses the same grants as SBPL path rules at launch time, so the
+        // bookkeeping call is a no-op off Windows; the execution boundary
+        // itself stays fail-closed in SandboxBackend::spawn_restricted.
+        return Ok(());
     }
     let permission = if write { "(OI)(CI)M" } else { "(OI)(CI)RX" };
     let grant = format!("*S-1-5-12:{permission}");
@@ -253,7 +321,12 @@ pub fn grant_restricted_code_access(path: &Path, write: bool) -> Result<(), Stri
 
 pub fn deny_restricted_code_read(path: &Path) -> Result<(), String> {
     if !cfg!(windows) {
-        return Err("restricted-code ACLs are only available on Windows".into());
+        // NTFS ACLs for the Restricted Code / AppContainer identities are a
+        // Windows enforcement artifact. The macOS Seatbelt backend (P2)
+        // expresses the same grants as SBPL path rules at launch time, so the
+        // bookkeeping call is a no-op off Windows; the execution boundary
+        // itself stays fail-closed in SandboxBackend::spawn_restricted.
+        return Ok(());
     }
     let status = run_icacls(path, &["/deny", "*S-1-5-12:(OI)(CI)(RX)", "/Q"])?;
     if !status.success() {
@@ -264,7 +337,12 @@ pub fn deny_restricted_code_read(path: &Path) -> Result<(), String> {
 
 pub fn deny_restricted_code_write(path: &Path) -> Result<(), String> {
     if !cfg!(windows) {
-        return Err("restricted-code ACLs are only available on Windows".into());
+        // NTFS ACLs for the Restricted Code / AppContainer identities are a
+        // Windows enforcement artifact. The macOS Seatbelt backend (P2)
+        // expresses the same grants as SBPL path rules at launch time, so the
+        // bookkeeping call is a no-op off Windows; the execution boundary
+        // itself stays fail-closed in SandboxBackend::spawn_restricted.
+        return Ok(());
     }
     let status = run_icacls(path, &["/deny", "*S-1-5-12:(OI)(CI)(W,D,DC)", "/Q"])?;
     if !status.success() {
@@ -275,7 +353,12 @@ pub fn deny_restricted_code_write(path: &Path) -> Result<(), String> {
 
 pub fn revoke_restricted_code_access(path: &Path) -> Result<(), String> {
     if !cfg!(windows) {
-        return Err("restricted-code ACLs are only available on Windows".into());
+        // NTFS ACLs for the Restricted Code / AppContainer identities are a
+        // Windows enforcement artifact. The macOS Seatbelt backend (P2)
+        // expresses the same grants as SBPL path rules at launch time, so the
+        // bookkeeping call is a no-op off Windows; the execution boundary
+        // itself stays fail-closed in SandboxBackend::spawn_restricted.
+        return Ok(());
     }
     let mut errors = Vec::new();
     for mode in ["/remove:g", "/remove:d"] {
@@ -526,7 +609,31 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::git_common_dir;
+    use super::{git_common_dir, parse_git_version, trusted_git_executable};
+
+    #[test]
+    fn git_version_parsing_accepts_platform_suffixes() {
+        assert_eq!(parse_git_version(b"git version 2.50.1\n"), Some((2, 50)));
+        assert_eq!(
+            parse_git_version(b"git version 2.50.1.windows.1\r\n"),
+            Some((2, 50))
+        );
+        assert_eq!(
+            parse_git_version(b"git version 2.39.5 (Apple Git-154)\n"),
+            Some((2, 39))
+        );
+        assert_eq!(parse_git_version(b"git version 2\n"), None);
+        assert_eq!(parse_git_version(b"not git\n"), None);
+    }
+
+    #[test]
+    fn system_git_resolves_with_a_supported_version() {
+        // Dev machines and CI runners all ship a system Git; the resolver must
+        // accept it and cache the explicit absolute path for Worker injection.
+        let git = trusted_git_executable().expect("system Git must resolve");
+        assert!(git.is_absolute());
+        assert!(git.is_file());
+    }
 
     #[test]
     fn linked_worktree_gitfile_resolves_the_shared_common_directory() {

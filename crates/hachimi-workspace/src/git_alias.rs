@@ -6,7 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::{WorkspaceError, WorkspaceErrorCode};
+use crate::WorkspaceError;
+#[cfg(windows)]
+use crate::WorkspaceErrorCode;
 
 pub(crate) const GIT_DIR_ALIAS_ENV: &str = "HACHIMI_GIT_DIR_ALIAS";
 pub(crate) const GIT_WORK_TREE_ALIAS_ENV: &str = "HACHIMI_GIT_WORK_TREE_ALIAS";
@@ -17,7 +19,9 @@ pub(crate) struct RestrictedGitAliases {
     git_dir: Option<PathBuf>,
     work_tree: PathBuf,
     real_work_tree: PathBuf,
+    #[cfg(windows)]
     _common_drive: Option<SubstDrive>,
+    #[cfg(windows)]
     _checkout_drive: SubstDrive,
 }
 
@@ -100,13 +104,14 @@ impl RestrictedGitAliases {
     }
 }
 
+#[cfg(windows)]
 #[derive(Debug)]
 struct SubstDrive {
     drive: String,
 }
 
+#[cfg(windows)]
 impl SubstDrive {
-    #[cfg(windows)]
     fn new(target: &Path) -> Result<Self, WorkspaceError> {
         static DRIVE_ASSIGNMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = DRIVE_ASSIGNMENT.lock().map_err(|_| {
@@ -138,33 +143,23 @@ impl SubstDrive {
         ))
     }
 
-    #[cfg(not(windows))]
-    fn new(_target: &Path) -> Result<Self, WorkspaceError> {
-        Err(WorkspaceError::new(
-            WorkspaceErrorCode::HostDisconnected,
-            "restricted Git aliases are Windows-only",
-        ))
-    }
-
     fn root(&self) -> PathBuf {
         PathBuf::from(format!("{}\\", self.drive))
     }
 }
 
+#[cfg(windows)]
 impl Drop for SubstDrive {
     fn drop(&mut self) {
-        #[cfg(windows)]
-        {
-            let _ = hachimi_process_policy::std_command(
-                "subst.exe",
-                hachimi_process_policy::ProcessPolicy::HiddenCaptured,
-            )
-            .args([self.drive.as_str(), "/D"])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        }
+        let _ = hachimi_process_policy::std_command(
+            "subst.exe",
+            hachimi_process_policy::ProcessPolicy::HiddenCaptured,
+        )
+        .args([self.drive.as_str(), "/D"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
     }
 }
 
@@ -203,6 +198,7 @@ fn git_stdout(git: &Path, checkout: &Path, arguments: &[&str]) -> Result<String,
         })
 }
 
+#[cfg(windows)]
 fn io_error(error: std::io::Error) -> WorkspaceError {
     WorkspaceError::new(WorkspaceErrorCode::HostDisconnected, error.to_string())
 }

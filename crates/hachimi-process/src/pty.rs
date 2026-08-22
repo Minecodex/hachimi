@@ -23,6 +23,8 @@ use crate::{ProcessError, RuntimeControl, RuntimeOutput, SpawnedRuntime};
 
 #[cfg(windows)]
 mod conpty;
+#[cfg(all(unix, not(windows)))]
+mod unix_pty;
 
 const PIPE_READ_CHUNK: usize = 8 * 1024;
 
@@ -265,11 +267,15 @@ async fn spawn_pty(
         let command = resolve_restricted_command(launcher.as_deref(), &command, &environment)?;
         conpty::spawn_conpty(launcher, command, cwd, environment, size, timeout).await
     }
-    #[cfg(not(windows))]
+    #[cfg(all(unix, not(windows)))]
+    {
+        unix_pty::spawn_unix_pty(launcher, command, cwd, environment, size, timeout).await
+    }
+    #[cfg(not(any(windows, unix)))]
     {
         let _ = (launcher, command, cwd, environment, size, timeout);
         Err(ProcessError::Pty(
-            "the first interactive process backend is Windows ConPTY".into(),
+            "interactive process backends are implemented for Windows and unix".into(),
         ))
     }
 }

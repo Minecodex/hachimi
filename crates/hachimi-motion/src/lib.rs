@@ -1350,7 +1350,7 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<(), MotionError> {
 
 fn atomic_bytes(path: &Path, bytes: &[u8]) -> Result<(), MotionError> {
     let mut file = AtomicWriteFile::open(path)?;
-    file.write_all(&bytes)?;
+    file.write_all(bytes)?;
     file.flush()?;
     file.commit()?;
     Ok(())

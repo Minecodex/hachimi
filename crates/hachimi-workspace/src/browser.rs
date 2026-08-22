@@ -264,14 +264,14 @@ fn encode_hex(bytes: &[u8]) -> String {
 pub(crate) fn candidate_files(root: &Path) -> Result<(Vec<String>, bool), WorkspaceError> {
     let mut command = std_command(crate::git_program(), ProcessPolicy::HiddenCaptured);
     command
-        .args([
-            "-c",
-            "core.quotepath=false",
-            "ls-files",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ])
+        .arg("-c")
+        .arg("core.quotepath=false")
+        .arg("-c")
+        .arg(format!(
+            "core.hooksPath={}",
+            crate::git::DISABLED_HOOKS_PATH
+        ))
+        .args(["ls-files", "--cached", "--others", "--exclude-standard"])
         .current_dir(crate::restricted_process_cwd(root))
         .env("GIT_OPTIONAL_LOCKS", "0");
     crate::configure_restricted_std_git_environment(&mut command);

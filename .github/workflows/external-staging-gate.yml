@@ -156,8 +156,7 @@ jobs:
           FORGEJO_SECRET: ${{ secrets.HACHIMI_STAGING_FORGEJO_TOKEN }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:CONFIG_JSON)) { throw 'Forge staging config is missing.' }
-          & scripts/prepare-managed-git.ps1
-          "HACHIMI_GIT_EXECUTABLE=$((Resolve-Path apps/desktop/src-tauri/managed-git/cmd/git.exe).Path)" | Out-File $env:GITHUB_ENV -Append
+          "HACHIMI_GIT_EXECUTABLE=$((Get-Command git.exe).Source)" | Out-File $env:GITHUB_ENV -Append
           New-Item -ItemType Directory -Path target/staging-config -Force | Out-Null
           [IO.File]::WriteAllText((Join-Path $pwd 'target/staging-config/forge.json'), $env:CONFIG_JSON, [Text.UTF8Encoding]::new($false))
           cargo build -p hachimi-llm --bin hachimi-staging-credential

@@ -55,7 +55,6 @@ jobs:
           pnpm check
       - name: Build one immutable candidate set
         run: |
-          pnpm runtime:prepare
           pnpm build:installer
           pnpm build:portable
           $targetRoot = [System.IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE "target"))

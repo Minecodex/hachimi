@@ -10,15 +10,17 @@ use hachimi_protocol::{
 };
 use parking_lot::Mutex;
 
-use crate::{
-    CapturedWindow, ComputerBroker, ComputerBrokerFuture, ComputerHostError, MAX_FRAME_IMAGE_BYTES,
-};
+#[cfg(any(windows, test))]
+use crate::MAX_FRAME_IMAGE_BYTES;
+use crate::{CapturedWindow, ComputerBroker, ComputerBrokerFuture, ComputerHostError};
 
 #[cfg(windows)]
 mod windows;
 
 const FRAME_STORE_TTL: Duration = Duration::from_secs(30);
+#[cfg(any(windows, test))]
 const MAX_STORED_FRAMES: usize = 8;
+#[cfg(any(windows, test))]
 const MAX_STORED_FRAME_BYTES: usize = 64 * 1024 * 1024;
 static LEGACY_FRAME_CLEANUP: Once = Once::new();
 
@@ -53,6 +55,7 @@ struct FrameStore {
 }
 
 impl FrameStore {
+    #[cfg(any(windows, test))]
     fn insert(
         &mut self,
         token: String,

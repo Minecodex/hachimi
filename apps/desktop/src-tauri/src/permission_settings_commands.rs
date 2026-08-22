@@ -68,14 +68,9 @@ pub(super) fn search_permission_commands(
         return Ok(Vec::new());
     }
     let mut candidates = BTreeMap::<String, PermissionCommandCandidate>::new();
-    let mut roots = env::var_os("PATH")
+    let roots = env::var_os("PATH")
         .map(|value| env::split_paths(&value).collect::<Vec<_>>())
         .unwrap_or_default();
-    if let Ok(executable) = env::current_exe()
-        && let Some(root) = executable.parent()
-    {
-        roots.push(root.join("managed-git").join("cmd"));
-    }
     for root in roots {
         let Ok(entries) = fs::read_dir(&root) else {
             continue;
@@ -105,11 +100,7 @@ pub(super) fn search_permission_commands(
                 .or_insert_with(|| PermissionCommandCandidate {
                     name,
                     executable_path: canonical.to_string_lossy().into_owned(),
-                    source: if root.ends_with(Path::new("managed-git").join("cmd")) {
-                        "Hachimi bundled".into()
-                    } else {
-                        "PATH".into()
-                    },
+                    source: "PATH".into(),
                 });
         }
     }

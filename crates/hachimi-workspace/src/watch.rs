@@ -413,9 +413,16 @@ fn spawn_portable_watch(
         while !stop.load(Ordering::Acquire) {
             thread::sleep(Duration::from_millis(150));
             let current = portable_snapshot(&actual, recursive);
+            // Track content stamps, not just path presence: ReadDirectoryChangesW
+            // reports content writes, and the polling fallback must match that
+            // for edit-in-place files.
             let paths = previous
-                .symmetric_difference(&current)
-                .cloned()
+                .iter()
+                .chain(current.iter())
+                .filter(|(path, _)| previous.get(*path) != current.get(*path))
+                .map(|(path, _)| path.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
                 .collect::<Vec<_>>();
             previous = current;
             if !paths.is_empty()
@@ -433,21 +440,29 @@ fn spawn_portable_watch(
     })
 }
 
+/// Path → (content length, mtime) stamp so content-only writes are observed.
 #[cfg(not(windows))]
-fn portable_snapshot(root: &Path, recursive: bool) -> BTreeSet<PathBuf> {
-    fn collect(path: &Path, recursive: bool, output: &mut BTreeSet<PathBuf>) {
+type PortableSnapshot = std::collections::BTreeMap<PathBuf, (u64, Option<std::time::SystemTime>)>;
+
+#[cfg(not(windows))]
+fn portable_snapshot(root: &Path, recursive: bool) -> PortableSnapshot {
+    fn collect(path: &Path, recursive: bool, output: &mut PortableSnapshot) {
         let Ok(entries) = std::fs::read_dir(path) else {
             return;
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            output.insert(path.clone());
+            let stamp = std::fs::metadata(&path)
+                .ok()
+                .map(|metadata| (metadata.len(), metadata.modified().ok()))
+                .unwrap_or_default();
+            output.insert(path.clone(), stamp);
             if recursive && path.is_dir() {
                 collect(&path, recursive, output);
             }
         }
     }
-    let mut output = BTreeSet::new();
+    let mut output = PortableSnapshot::new();
     collect(root, recursive, &mut output);
     output
 }

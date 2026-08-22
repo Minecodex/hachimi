@@ -1163,9 +1163,13 @@ fn resolve_program_path(program: &str) -> Option<PathBuf> {
 }
 
 fn normalize_command_path(path: &Path) -> String {
-    path.to_string_lossy()
-        .replace('\\', "/")
-        .to_ascii_lowercase()
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    // Default NTFS and APFS volumes are both case-insensitive.
+    if cfg!(any(windows, target_os = "macos")) {
+        normalized.to_ascii_lowercase()
+    } else {
+        normalized
+    }
 }
 
 fn parse_scope(value: &str) -> Option<Scope> {

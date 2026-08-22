@@ -695,7 +695,6 @@ mod tests {
         assert_eq!(unc, PathBuf::from(r"\\server\share\model"));
     }
 
-    #[cfg(windows)]
     #[test]
     fn bundled_sense_voice_transcribes_chinese_fixture() {
         let model_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(
@@ -734,7 +733,6 @@ mod tests {
         assert!(!text.is_ascii());
     }
 
-    #[cfg(windows)]
     #[test]
     fn bundled_sense_voice_warms_up_selected_backend_and_transcribes() {
         let model_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(

@@ -571,6 +571,7 @@ export const commands = {
     invoke<DiffReadFileResponse>("read_workspace_diff_file", { request }),
   spawnProcess: (request: ProcessSpawnRequest) =>
     invoke<ProcessSessionRecord>("spawn_process", { request }),
+  getDefaultShell: () => invoke<string[]>("get_default_shell"),
   writeProcessStdin: (request: ProcessWriteRequest) =>
     invoke<void>("write_process_stdin", { request }),
   resizeProcess: (request: ProcessResizeRequest) => invoke<void>("resize_process", { request }),

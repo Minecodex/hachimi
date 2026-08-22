@@ -145,90 +145,37 @@ fn verify_native_runtime(runtime: &Path) {
     println!("cargo:rerun-if-changed={}", manifest_path.display());
     let bytes = std::fs::read(&manifest_path).unwrap_or_else(|error| {
         panic!(
-            "Windows DirectML runtime manifest is missing: {}: {error}",
+            "sherpa-onnx native runtime manifest is missing: {}: {error}",
             manifest_path.display()
         )
     });
     let manifest: serde_json::Value = serde_json::from_slice(&bytes)
-        .unwrap_or_else(|error| panic!("Windows DirectML manifest is invalid: {error}"));
+        .unwrap_or_else(|error| panic!("sherpa-onnx native runtime manifest is invalid: {error}"));
     let files = manifest["files"]
         .as_object()
-        .expect("Windows DirectML manifest must contain file hashes");
+        .expect("sherpa-onnx native runtime manifest must contain file hashes");
     for (name, expected) in files {
         let relative = Path::new(name);
         if relative.components().count() != 1 {
-            panic!("invalid Windows DirectML runtime file name: {name}");
+            panic!("invalid sherpa-onnx native runtime file name: {name}");
         }
         let path = runtime.join(relative);
         println!("cargo:rerun-if-changed={}", path.display());
         if !path.is_file() {
             panic!(
-                "Windows DirectML runtime is incomplete: missing {}",
+                "sherpa-onnx native runtime is incomplete: missing {}",
                 path.display()
             );
         }
         let expected_sha = expected
             .as_str()
-            .unwrap_or_else(|| panic!("missing DirectML runtime SHA-256 for {name}"));
+            .unwrap_or_else(|| panic!("missing sherpa-onnx runtime SHA-256 for {name}"));
         if !sha256_file(&path).eq_ignore_ascii_case(expected_sha) {
             panic!(
-                "Windows DirectML runtime SHA-256 mismatch: {}",
+                "sherpa-onnx native runtime SHA-256 mismatch: {}",
                 path.display()
             );
         }
-    }
-}
-
-fn verify_managed_git(root: &Path) {
-    const VERSION: &str = "2.50.1.windows.1";
-    const ARCHIVE_SHA256: &str = "6f672aebe9e488a246efd6875f9197dbc0d9a40100e218acc3877cba2b206c45";
-    let manifest_path = root.join("manifest.json");
-    println!("cargo:rerun-if-changed={}", manifest_path.display());
-    if !manifest_path.is_file() {
-        if std::env::var("PROFILE").as_deref() == Ok("release") {
-            panic!(
-                "pinned Managed Git is missing. Run `corepack pnpm runtime:prepare` before a release build"
-            );
-        }
-        println!(
-            "cargo:warning=pinned Managed Git is absent; Workspace Git is unavailable until `corepack pnpm runtime:prepare` runs"
-        );
-        return;
-    }
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&manifest_path).expect("read Managed Git manifest"))
-            .expect("Managed Git manifest is invalid");
-    assert_eq!(manifest["version"].as_str(), Some(VERSION));
-    assert_eq!(
-        manifest["sourceArchiveSha256"].as_str(),
-        Some(ARCHIVE_SHA256)
-    );
-    let files = manifest["files"]
-        .as_object()
-        .expect("Managed Git manifest has no file hashes");
-    assert!(files.contains_key("cmd/git.exe"));
-    for (relative, expected) in files {
-        let relative_path = Path::new(relative);
-        assert!(
-            !relative_path.as_os_str().is_empty()
-                && !relative_path.components().any(|component| matches!(
-                    component,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )),
-            "invalid Managed Git path: {relative}"
-        );
-        let path = root.join(relative_path);
-        println!("cargo:rerun-if-changed={}", path.display());
-        let metadata = std::fs::symlink_metadata(&path).unwrap_or_else(|error| {
-            panic!("Managed Git file is missing: {}: {error}", path.display())
-        });
-        assert!(metadata.is_file() && !metadata.file_type().is_symlink());
-        assert_eq!(
-            sha256_file(&path),
-            expected.as_str().expect("Managed Git SHA-256 must be text"),
-            "Managed Git SHA-256 mismatch: {}",
-            path.display()
-        );
     }
 }
 
@@ -411,9 +358,7 @@ fn verify_motion_catalog(root: &Path) {
 }
 
 fn register_sandbox_sidecar_hashes() {
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
-        return;
-    }
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
     for (name, environment) in [
         ("hachimi-sandbox-setup", "HACHIMI_SANDBOX_SETUP_SHA256"),
         (
@@ -427,6 +372,12 @@ fn register_sandbox_sidecar_hashes() {
             "HACHIMI_WORKSPACE_WORKER_SHA256",
         ),
     ] {
+        if !windows {
+            // Non-Windows platforms have no attested sandbox sidecars yet (P2);
+            // emit a placeholder so `env!` consumers still compile.
+            println!("cargo:rustc-env={environment}=");
+            continue;
+        }
         let path = Path::new("resources/internal-runtime").join(format!("{name}.exe"));
         println!("cargo:rerun-if-changed={}", path.display());
         if !path.is_file() {
@@ -460,9 +411,16 @@ fn read_glb_json(path: &Path) -> serde_json::Value {
 }
 
 fn main() {
-    println!(
-        "cargo:rerun-if-changed=resources/native/sherpa-onnx-1.13.4-directml/windows-x64/manifest.json"
-    );
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let native_runtime = match (target_os.as_str(), target_arch.as_str()) {
+        ("windows", _) => Some("resources/native/sherpa-onnx-1.13.4-directml/windows-x64"),
+        ("macos", "aarch64") => Some("resources/native/sherpa-onnx-1.13.4/darwin-arm64"),
+        _ => None,
+    };
+    if let Some(runtime) = native_runtime {
+        println!("cargo:rerun-if-changed={runtime}/manifest.json");
+    }
     verify_motion_catalog(Path::new("../../../assets/avatar-motions-v5"));
     verify_default_avatar_manifest(Path::new(
         "../../../assets/avatar-default/2639776812528692620/manifest.json",
@@ -473,11 +431,10 @@ fn main() {
     verify_speech_model_manifest(Path::new(
         "resources/ai-models/text-to-speech/vits-melo-zh-en/manifest.json",
     ));
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        let runtime =
-            std::path::Path::new("resources/native/sherpa-onnx-1.13.4-directml/windows-x64");
-        verify_native_runtime(runtime);
-        verify_managed_git(Path::new("managed-git"));
+    if let Some(runtime) = native_runtime {
+        verify_native_runtime(Path::new(runtime));
+    }
+    if target_os == "windows" {
         verify_cef_runtime(Path::new("../../../target/cef-bundle"));
     }
     register_sandbox_sidecar_hashes();

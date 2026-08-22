@@ -492,16 +492,48 @@ fn open_extension_directory(path: &std::path::Path) -> std::io::Result<()> {
         .map(|_| ())
 }
 
-#[cfg(not(windows))]
-fn open_extension_directory(_path: &std::path::Path) -> std::io::Result<()> {
+#[cfg(target_os = "macos")]
+fn open_store_url(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(all(unix, not(any(windows, target_os = "macos"))))]
+fn open_store_url(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_store_url(_url: &str) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "unsupported OS",
     ))
 }
 
-#[cfg(not(windows))]
-fn open_store_url(_url: &str) -> std::io::Result<()> {
+#[cfg(target_os = "macos")]
+fn open_extension_directory(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("open")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(all(unix, not(any(windows, target_os = "macos"))))]
+fn open_extension_directory(path: &std::path::Path) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_extension_directory(_path: &std::path::Path) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "unsupported OS",

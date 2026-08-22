@@ -206,6 +206,15 @@ impl EnterpriseApiClient {
         }
         let endpoint = endpoint.trim_end_matches('/').to_owned();
         let mut client = Self::new()?;
+        // A loopback endpoint never traverses a proxy; bypass them so hosts
+        // with a configured system/ENV proxy still reach the local server.
+        client.client = Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .user_agent("hachimi-agent/0.3 enterprise-connectors")
+            .no_proxy()
+            .build()
+            .map_err(|_| EnterpriseApiError::Transport)?;
         client.endpoints = EnterpriseEndpoints {
             wecom: endpoint.clone(),
             dingtalk_legacy: endpoint.clone(),

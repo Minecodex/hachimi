@@ -69,9 +69,10 @@ const ERROR_COPY: Record<string, [string, string]> = {
     "Workspace Worker 无法注册。",
     "The Workspace Worker could not be registered.",
   ],
-  managed_git_missing: ["内置 Git 不存在。", "Managed Git is missing."],
-  managed_git_invalid: ["内置 Git 校验失败。", "Managed Git failed validation."],
-  managed_git_registration_failed: ["内置 Git 无法注册。", "Managed Git could not be registered."],
+  system_git_missing: [
+    "未找到系统 Git（需要 2.40 及以上），Workspace Git 不可用。",
+    "System Git (>= 2.40) was not found; Workspace Git is unavailable.",
+  ],
   motion_catalog_unavailable: [
     "内置动作资源不可用，角色动作已降级。",
     "Bundled motion resources are unavailable; avatar motion is degraded.",

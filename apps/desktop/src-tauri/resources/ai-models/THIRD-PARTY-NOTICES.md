@@ -12,4 +12,4 @@
   file checksums and license status are recorded in the model manifest; a copy
   of Apache License 2.0 is stored beside the model.
 
-The download URLs and SHA-256 checksums used to prepare the packaged files are recorded in each model's `manifest.json` and in `scripts/prepare-speech-models.ps1`.
+The download URLs and SHA-256 checksums used to prepare the packaged files are recorded in each model's `manifest.json` and in `scripts/prepare-speech-models.mjs`.

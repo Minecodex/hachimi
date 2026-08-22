@@ -41,6 +41,7 @@ impl Drop for SkillChangeWatch {
 }
 
 impl SkillHost {
+    #[cfg(windows)]
     fn watch_root_snapshot(&self) -> Vec<PathBuf> {
         let mut roots = self
             .discovered_roots

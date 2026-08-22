@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "sherpaOnnxVersion": "1.13.4",
+  "sourceArchive": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-v1.13.4-osx-arm64-shared-lib.tar.bz2",
+  "sourceArchiveSha256": "995d38d323eef0bfbfe7432dcceffda91bbd95525a15fa64fed517ed368378b9",
+  "providerSyntax": "cpu",
+  "onnxRuntimeVersion": "1.27.0",
+  "target": "aarch64-apple-darwin",
+  "configuration": "Release",
+  "notes": "The upstream libonnxruntime dylibs ship with an invalid signature (kernel SIGKILLs on load); they are re-signed adhoc (`codesign --force --sign -`) after extraction. File hashes below are post-signing. P5 replaces adhoc with the Developer ID signing chain.",
+  "files": {
+    "libonnxruntime.1.27.0.dylib": "245b4897245c6da8d679b88e68cb7b40a6e3f68fc714070c8ea36eac6916d8ef",
+    "libonnxruntime.dylib": "3f5ba8807c1d60ccda41a1f9efc44c3be7cee7101e3e7346f0fe9952ea0559eb",
+    "libsherpa-onnx-c-api.dylib": "444d48d329254a1839ac304cc38475041076b70fa35f1aaf8540e5614fa09e33"
+  }
+}

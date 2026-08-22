@@ -52,13 +52,12 @@ fn browser_version_supported(kind: SystemBrowserKind, version: &str) -> bool {
         .is_some_and(|major| major >= minimum)
 }
 
-#[cfg(windows)]
 fn executable_version(executable: &std::path::Path) -> Option<String> {
-    let output = std::process::Command::new(executable)
-        .arg("--version")
-        .creation_flags(0x0800_0000)
-        .output()
-        .ok()?;
+    let mut command = std::process::Command::new(executable);
+    command.arg("--version");
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -70,11 +69,6 @@ fn executable_version(executable: &std::path::Path) -> Option<String> {
                 .is_some_and(|value| value.is_ascii_digit())
         })
         .map(|value| value.trim().to_owned())
-}
-
-#[cfg(not(windows))]
-fn executable_version(_executable: &std::path::Path) -> Option<String> {
-    None
 }
 
 #[cfg(windows)]
@@ -97,6 +91,20 @@ fn registry_app_paths(_executable: &str) -> Vec<PathBuf> {
     Vec::new()
 }
 
+#[cfg(target_os = "macos")]
+fn standard_paths(kind: SystemBrowserKind) -> Vec<PathBuf> {
+    let app = match kind {
+        SystemBrowserKind::Chrome => "Google Chrome.app/Contents/MacOS/Google Chrome",
+        SystemBrowserKind::Edge => "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    };
+    let mut roots = vec![PathBuf::from("/Applications")];
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(PathBuf::from(home).join("Applications"));
+    }
+    roots.into_iter().map(|root| root.join(app)).collect()
+}
+
+#[cfg(windows)]
 fn standard_paths(kind: SystemBrowserKind) -> Vec<PathBuf> {
     let relative = match kind {
         SystemBrowserKind::Chrome => "Google/Chrome/Application/chrome.exe",
@@ -108,6 +116,11 @@ fn standard_paths(kind: SystemBrowserKind) -> Vec<PathBuf> {
         .map(PathBuf::from)
         .map(|root| root.join(relative))
         .collect()
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn standard_paths(_kind: SystemBrowserKind) -> Vec<PathBuf> {
+    Vec::new()
 }
 
 #[cfg(windows)]

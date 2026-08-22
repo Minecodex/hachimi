@@ -6,11 +6,13 @@ use std::{
 
 use futures_util::FutureExt;
 use hachimi_agent::{McpToolPolicy, ToolCall, ToolInvocation, mcp_tool_executors};
+#[cfg(windows)]
+use hachimi_capabilities::McpStdioSandboxHost;
 use hachimi_capabilities::{
     McpClientError, McpClientHandle, McpProgressFuture, McpProgressHandler,
     McpProgressNotification, McpRunCorrelation, McpServerRequest, McpServerRequestFuture,
-    McpServerRequestHandler, McpServerRequestResponse, McpStdioClient, McpStdioSandboxHost,
-    McpStdioServerConfig, McpSupervisor,
+    McpServerRequestHandler, McpServerRequestResponse, McpStdioClient, McpStdioServerConfig,
+    McpSupervisor,
 };
 use hachimi_protocol::{
     BehaviorMode, EntryProfile, McpServerHealthState, McpServerId, McpServerRecord,
