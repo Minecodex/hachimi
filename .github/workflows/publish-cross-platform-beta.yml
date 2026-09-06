@@ -23,6 +23,9 @@ jobs:
         with:
           node-version: 24.10.0
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install Windows build tools
+        shell: powershell
+        run: choco install ripgrep --no-progress --yes
       - run: corepack enable
       - run: corepack prepare pnpm@11.15.1 --activate
       - run: pnpm install --frozen-lockfile
