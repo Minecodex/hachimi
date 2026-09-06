@@ -114,7 +114,7 @@ jobs:
   # the CEF host smoke. Prettier/ESLint/typecheck stay on the Windows job
   # (platform-independent).
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4

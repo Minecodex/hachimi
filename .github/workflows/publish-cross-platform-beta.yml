@@ -1,0 +1,127 @@
+name: Publish Cross-Platform Beta
+
+on:
+  push:
+    tags: ["beta-*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-cross-platform-beta-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.10.0
+      - uses: dtolnay/rust-toolchain@stable
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.15.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Verify generated contracts and architecture boundaries
+        run: |
+          pnpm contracts:check
+          node scripts/check-agent-architecture.mjs
+      - name: Build Windows installers and portable package
+        shell: powershell
+        run: |
+          pnpm build:installer
+          pnpm build:portable
+          $assetRoot = Join-Path $env:GITHUB_WORKSPACE "target/beta-assets/windows"
+          New-Item -ItemType Directory -Path $assetRoot -Force | Out-Null
+          Copy-Item target/release/bundle/nsis/*.exe $assetRoot
+          Copy-Item target/release/bundle/msi/*.msi $assetRoot
+          Copy-Item target/portable/Hachimi-portable.zip (Join-Path $assetRoot "Hachimi_1.0.0_x64-portable.zip")
+          $checksums = Get-ChildItem $assetRoot -File | Sort-Object Name | ForEach-Object {
+            "$(($_ | Get-FileHash -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
+          }
+          [IO.File]::WriteAllLines((Join-Path $assetRoot "SHA256SUMS-windows.txt"), $checksums)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-windows-${{ github.sha }}
+          path: target/beta-assets/windows/*
+          if-no-files-found: error
+          retention-days: 14
+
+  build-macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.10.0
+      - uses: dtolnay/rust-toolchain@stable
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.15.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Build and verify macOS ARM64 DMG
+        run: |
+          test "$(uname -m)" = "arm64"
+          pnpm build:installer
+          hdiutil verify target/release/bundle/dmg/Hachimi_1.0.0_aarch64.dmg
+          codesign --verify --deep --strict target/release/bundle/macos/Hachimi.app
+          file target/release/bundle/macos/Hachimi.app/Contents/MacOS/hachimi-desktop | grep -q arm64
+          mkdir -p target/beta-assets/macos
+          cp target/release/bundle/dmg/Hachimi_1.0.0_aarch64.dmg target/beta-assets/macos/
+          cd target/beta-assets/macos
+          shasum -a 256 Hachimi_1.0.0_aarch64.dmg > SHA256SUMS-macos.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-macos-arm64-${{ github.sha }}
+          path: target/beta-assets/macos/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [build-windows, build-macos-arm64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: beta-*-${{ github.sha }}
+          path: target/release-assets
+          merge-multiple: true
+      - name: Verify tag and cross-platform artifacts
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^beta-[0-9]+\.[0-9]+$ ]] || { echo beta_release_tag_invalid; exit 1; }
+          test "$(find target/release-assets -maxdepth 1 -type f -name '*.exe' | wc -l)" -eq 1
+          test "$(find target/release-assets -maxdepth 1 -type f -name '*.msi' | wc -l)" -eq 1
+          test "$(find target/release-assets -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 1
+          test "$(find target/release-assets -maxdepth 1 -type f -name '*.dmg' | wc -l)" -eq 1
+          cat target/release-assets/SHA256SUMS-windows.txt target/release-assets/SHA256SUMS-macos.txt > target/release-assets/SHA256SUMS.txt
+          rm target/release-assets/SHA256SUMS-windows.txt target/release-assets/SHA256SUMS-macos.txt
+          cd target/release-assets
+          sha256sum --check SHA256SUMS.txt
+      - name: Create immutable GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo release_already_exists
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            target/release-assets/* \
+            LICENSE NOTICE.md \
+            --verify-tag \
+            --title "Hachimi $RELEASE_TAG" \
+            --notes-file docs/RELEASE_BETA_1_1_NOTES.md \
+            --prerelease

@@ -1,15 +1,17 @@
 # Hachimi Desktop
 
-Hachimi 是一个 Windows 先行的本地桌面 Agent 和透明 3D 桌宠。它把对话、项目工作区、工具调用、定时任务和桌宠交互放在同一个 Runtime 中，使用 Tauri 2、Rust、SolidJS、Three.js 和 three-vrm 构建。
+Hachimi 是一个面向 Windows 和 macOS 的本地桌面 Agent 与透明 3D 桌宠。它把对话、项目工作区、工具调用、定时任务和桌宠交互放在同一个 Runtime 中，使用 Tauri 2、Rust、SolidJS、Three.js 和 three-vrm 构建。
 
-当前版本是 `beta-1.0` Windows 预发行版。源码采用 Apache-2.0；官方预编译包包含默认 VRM，默认 VRM 的资源许可限制见 [NOTICE](NOTICE.md)。
+当前版本是 `beta-1.1` 双平台预发行版。源码采用 Apache-2.0；官方预编译包包含默认 VRM，默认 VRM 的资源许可限制见 [NOTICE](NOTICE.md)。
 
 ## 下载
 
-- **Windows 10/11 x64**：[下载 MSI 安装程序](https://github.com/kakj-go/hachimi/releases/download/beta-1.0/Hachimi_1.0.0_x64_en-US.msi)，也可以在 [beta-1.0 发布页](https://github.com/kakj-go/hachimi/releases/tag/beta-1.0) 获取其他 Windows 安装包。
-- **macOS / Linux**：暂不支持，当前没有可用的安装包。
+- **Windows 10/11 x64**：[MSI 安装程序](https://github.com/kakj-go/hachimi/releases/download/beta-1.1/Hachimi_1.0.0_x64_en-US.msi) · [NSIS 安装程序](https://github.com/kakj-go/hachimi/releases/download/beta-1.1/Hachimi_1.0.0_x64-setup.exe) · [便携版](https://github.com/kakj-go/hachimi/releases/download/beta-1.1/Hachimi_1.0.0_x64-portable.zip)
+- **macOS 13+，Apple Silicon**：[下载 ARM64 DMG](https://github.com/kakj-go/hachimi/releases/download/beta-1.1/Hachimi_1.0.0_aarch64.dmg)
+- **所有产物与校验值**：[beta-1.1 发布页](https://github.com/kakj-go/hachimi/releases/tag/beta-1.1)
+- **Linux**：暂不支持。
 
-Windows 安装包目前未进行代码签名，安装时系统可能显示安全提示。beta 版本仍在开发和验证阶段，请先备份重要数据。
+Windows 安装包目前未进行代码签名；macOS 安装包使用 ad-hoc 签名、尚未 Apple 公证。系统可能显示安全提示，macOS 首次安装后可右键 Hachimi 选择“打开”。Beta 版本仍在开发和验证阶段，请先备份重要数据。
 
 ## 界面预览
 
@@ -43,7 +45,7 @@ Windows 安装包目前未进行代码签名，安装时系统可能显示安全
 
 - **统一 Agent Runtime**：持久化 Session、Run、Transcript Item、Approval、UserInput、Compaction、恢复、后台任务和 Artifact；Pet 与 Workbench 共用同一执行链。
 - **项目工作区**：文件树、编辑器、搜索、watch、Diff/Review、Terminal、Git 分支、stage、commit、compare 和 push。
-- **模型与工具**：OpenAI-compatible Chat Completions、Responses、Embeddings；Skills、MCP stdio、HTTPS/loopback HTTP、OAuth 和统一 Tool Orchestrator。API Key 使用 Windows Credential Manager 保存。
+- **模型与工具**：OpenAI-compatible Chat Completions、Responses、Embeddings；Skills、MCP stdio、HTTPS/loopback HTTP、OAuth 和统一 Tool Orchestrator。API Key 使用系统凭据存储保存。
 - **浏览器与桌面控制**：内置 CEF Workspace、外部 Chrome observation、接管/恢复、站点权限、下载，以及 Computer Observe/Act 和应用规则。高完整性桌面与真实 Profile 仍需 Windows Gate 验证。
 - **定时任务**：At、Every、Cron、Event、独立 Session 或共享 Session、Worktree、权限、Skills/MCP/Connector、重试、停止条件、通知和重启 reconciliation。后台 Browser upload 当前会明确返回不支持。
 - **桌宠、模型与语音**：VRM 0.x/1.0 检测导入、VRMA 动作库与重定向、口型/注视/SpringBone、SenseVoice-Small 离线识别和 sherpa-onnx VITS/MeloTTS 离线合成。
@@ -54,9 +56,9 @@ Windows 安装包目前未进行代码签名，安装时系统可能显示安全
 
 ## 快速开始
 
-开发环境：Windows 11、WebView2、Rust `1.97.1`、Node.js `24.10.x`、pnpm `11.15.1` 和 Git LFS。
+开发环境：Windows 11 + WebView2，或 macOS 13+ Apple Silicon；另需 Rust `1.97.1`、Node.js `24.10.x`、pnpm `11.15.1` 和 Git LFS。
 
-```powershell
+```shell
 git lfs install
 git lfs pull
 corepack enable
@@ -66,7 +68,7 @@ corepack pnpm dev
 
 语音模型或默认资源缺失时，可以运行：
 
-```powershell
+```shell
 corepack pnpm models:prepare
 ```
 
@@ -76,13 +78,13 @@ VRM、VRMA 和 sherpa-onnx 模型的格式、大小与许可要求见 [3D 角色
 
 完整本地检查入口：
 
-```powershell
+```shell
 corepack pnpm check
 ```
 
 首次执行视觉检查前安装固定浏览器：
 
-```powershell
+```shell
 corepack pnpm --filter @hachimi/ui exec playwright install chromium
 ```
 
@@ -100,12 +102,17 @@ corepack pnpm test:windows:release
 
 ## 构建
 
-```powershell
+```shell
 corepack pnpm build:installer
+```
+
+Windows 还可以生成便携包：
+
+```powershell
 corepack pnpm build:portable
 ```
 
-MSI/NSIS 输出到 `target/release/bundle/`，便携包输出到 `target/portable/Hachimi-portable.zip`。
+Windows 的 MSI/NSIS 输出到 `target/release/bundle/`，便携包输出到 `target/portable/Hachimi-portable.zip`；macOS ARM64 DMG 输出到 `target/release/bundle/dmg/`。
 
 ## 文档索引
 
@@ -120,7 +127,7 @@ MSI/NSIS 输出到 `target/release/bundle/`，便携包输出到 `target/portabl
 
 ## 本地数据
 
-Debug 默认使用 `target/hachimi-data`；便携版使用程序同级 `data`；安装版使用 `%APPDATA%/com.hachimi.desktop`。可通过 `HACHIMI_DATA_DIR` 指定数据根目录。API Key 不会明文写入这些目录，重置数据会同时清理本地凭据。
+Debug 默认使用 `target/hachimi-data`；Windows 便携版使用程序同级 `data`；Windows 安装版使用 `%APPDATA%/com.hachimi.desktop`，macOS 安装版使用 `~/Library/Application Support/com.hachimi.desktop`。可通过 `HACHIMI_DATA_DIR` 指定数据根目录。API Key 不会明文写入这些目录，重置数据会同时清理本地凭据。
 
 ## 许可
 
