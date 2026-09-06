@@ -1327,6 +1327,7 @@ wrap_client! {
             Some(HachimiRequestHandler::new(self.manager.clone(), self.tab_id.clone()))
         }
 
+        #[cfg(target_os = "macos")]
         fn render_handler(&self) -> Option<RenderHandler> {
             if self.manager.is_osr() {
                 return Some(HachimiRenderHandler::new(
@@ -1334,6 +1335,11 @@ wrap_client! {
                     self.tab_id.clone(),
                 ));
             }
+            None
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        fn render_handler(&self) -> Option<RenderHandler> {
             None
         }
     }
