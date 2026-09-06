@@ -19,7 +19,9 @@ use sha2::Digest as _;
 use thiserror::Error;
 
 mod platform;
-pub use platform::{PlatformComputerBroker, computer_runtime_health};
+pub use platform::{
+    PlatformComputerBroker, computer_runtime_health, request_screen_capture_access,
+};
 
 const FRAME_TTL_MS: i64 = 15_000;
 pub(crate) const MAX_FRAME_IMAGE_BYTES: usize = 20 * 1024 * 1024;
@@ -751,11 +753,16 @@ fn validate_action(action: &ComputerAction) -> Result<(), ComputerHostError> {
             (1..=16_384).contains(width) && (1..=16_384).contains(height)
         }
         ComputerAction::LaunchApp { app_id } => {
-            app_id.len() <= 128
-                && app_id.to_ascii_lowercase().ends_with(".exe")
-                && app_id
-                    .chars()
-                    .all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '_' | '-'))
+            let shape_valid = app_id
+                .chars()
+                .all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '_' | '-'));
+            if cfg!(windows) {
+                app_id.len() <= 128 && app_id.to_ascii_lowercase().ends_with(".exe") && shape_valid
+            } else {
+                // macOS resolves bundle identifiers, app names and `.app`
+                // bundle names via `open -a`; no `.exe` suffix exists.
+                !app_id.is_empty() && app_id.len() <= 128 && shape_valid
+            }
         }
     };
     valid.then_some(()).ok_or(ComputerHostError::InvalidAction)
@@ -1164,26 +1171,51 @@ mod tests {
 
     #[test]
     fn controlled_app_launch_accepts_only_a_simple_executable_basename() {
-        assert!(
-            validate_action(&ComputerAction::LaunchApp {
-                app_id: "notepad.exe".into(),
-            })
-            .is_ok()
-        );
-        for app_id in [
-            "C:\\Windows\\notepad.exe",
-            "..\\notepad.exe",
-            "notepad.exe --argument",
-            "notepad.cmd",
-            "/usr/bin/app.exe",
-        ] {
-            assert_eq!(
+        if cfg!(windows) {
+            assert!(
                 validate_action(&ComputerAction::LaunchApp {
-                    app_id: app_id.into(),
-                }),
-                Err(ComputerHostError::InvalidAction),
-                "{app_id}"
+                    app_id: "notepad.exe".into(),
+                })
+                .is_ok()
             );
+            for app_id in [
+                "C:\\Windows\\notepad.exe",
+                "..\\notepad.exe",
+                "notepad.exe --argument",
+                "notepad.cmd",
+                "/usr/bin/app.exe",
+            ] {
+                assert_eq!(
+                    validate_action(&ComputerAction::LaunchApp {
+                        app_id: app_id.into(),
+                    }),
+                    Err(ComputerHostError::InvalidAction),
+                    "{app_id}"
+                );
+            }
+        } else {
+            // macOS resolves bundle identifiers and app names via `open -a`.
+            assert!(
+                validate_action(&ComputerAction::LaunchApp {
+                    app_id: "com.apple.Safari".into(),
+                })
+                .is_ok()
+            );
+            assert!(
+                validate_action(&ComputerAction::LaunchApp {
+                    app_id: "Safari".into(),
+                })
+                .is_ok()
+            );
+            for app_id in ["Safari --argument", "/usr/bin/Safari", "../Safari"] {
+                assert_eq!(
+                    validate_action(&ComputerAction::LaunchApp {
+                        app_id: app_id.into(),
+                    }),
+                    Err(ComputerHostError::InvalidAction),
+                    "{app_id}"
+                );
+            }
         }
     }
 

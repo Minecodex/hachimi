@@ -374,6 +374,115 @@ async fn duplicate_handle_and_detached_ttl_fail_closed() {
     ));
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn restricted_terminal_runs_under_seatbelt_and_stays_inside_checkout() {
+    let root = tempfile::tempdir().expect("terminal root");
+    let registry = ProcessRegistry::default();
+    let mut launch = spec(
+        root.path(),
+        vec!["/bin/sh".into(), "-i".into()],
+        true,
+        64 * 1024,
+    );
+    launch.cwd = root.path().canonicalize().expect("canonical terminal root");
+    launch.environment = std::env::vars().collect();
+    launch.timeout = Some(Duration::from_secs(30));
+    // The launcher path is a Windows contract; macOS wraps in sandbox-exec
+    // regardless of its value.
+    launch.restricted_launcher = Some(std::path::PathBuf::from("unused-on-macos"));
+    let launched = registry.spawn(launch).await.expect("restricted terminal");
+    let process_id = launched.id.clone();
+
+    async fn write(registry: &ProcessRegistry, id: &ProcessSessionId, key: &str, bytes: &[u8]) {
+        registry
+            .write_base64(
+                &ClientId("workbench".into()),
+                id,
+                key,
+                Some(&STANDARD.encode(bytes)),
+                false,
+            )
+            .await
+            .expect("write");
+    }
+    async fn read_until(
+        registry: &ProcessRegistry,
+        id: &ProcessSessionId,
+        after: &mut Option<u64>,
+        output: &mut Vec<u8>,
+        needle: &str,
+    ) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let snapshot = registry
+                    .read(id, *after, None, Some(Duration::from_millis(500)))
+                    .await
+                    .expect("read");
+                for chunk in snapshot.chunks {
+                    output.extend(STANDARD.decode(chunk.delta_base64).expect("base64"));
+                }
+                *after = Some(snapshot.next_sequence);
+                if String::from_utf8_lossy(output).contains(needle) {
+                    return;
+                }
+                assert!(!snapshot.closed, "terminal exited before {needle:?}");
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {needle:?}"));
+    }
+
+    let mut after = None;
+    let mut output = Vec::new();
+    write(
+        &registry,
+        &process_id,
+        "cwd-write",
+        b"echo ok > inside.txt && echo write-ok\n",
+    )
+    .await;
+    read_until(&registry, &process_id, &mut after, &mut output, "write-ok").await;
+    write(
+        &registry,
+        &process_id,
+        "escape",
+        b"touch $HOME/hachimi-pty-escape 2>/dev/null && echo escape-leak || echo escape-denied\n",
+    )
+    .await;
+    read_until(
+        &registry,
+        &process_id,
+        &mut after,
+        &mut output,
+        "escape-denied",
+    )
+    .await;
+    write(&registry, &process_id, "exit", b"exit\n").await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let snapshot = registry
+                .read(&process_id, after, None, Some(Duration::from_millis(500)))
+                .await
+                .expect("read");
+            if snapshot.closed {
+                break;
+            }
+            after = Some(snapshot.next_sequence);
+        }
+    })
+    .await
+    .expect("terminal close");
+    assert!(root.path().join("inside.txt").is_file());
+    assert!(
+        !std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .expect("HOME")
+            .join("hachimi-pty-escape")
+            .exists()
+    );
+}
+
 #[cfg(windows)]
 #[tokio::test]
 #[ignore = "requires the standard-user Windows sandbox release environment"]

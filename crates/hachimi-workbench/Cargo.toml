@@ -12,6 +12,7 @@ hachimi-core.workspace = true
 hachimi-protocol.workspace = true
 hachimi-process-policy.workspace = true
 hachimi-storage.workspace = true
+hachimi-system-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

@@ -3,10 +3,22 @@ import {
   type GitRefRecord,
   type ProjectGitSnapshot,
   type ProjectRecord,
+  type SystemRuntimeSnapshot,
+  type SystemToolCapability,
 } from "@hachimi/contracts";
 import { useI18n } from "@hachimi/i18n";
 import { Button, Dialog, TextField } from "@hachimi/ui";
-import { Show, createEffect, createMemo, createSignal, untrack, type Accessor } from "solid-js";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+  untrack,
+  type Accessor,
+} from "solid-js";
 
 import type { WorkbenchCommandPort } from "./workbench-command-port";
 import { directUserMutationContext } from "./mutation-context";
@@ -26,8 +38,51 @@ export function createProjectGitController(options: {
   const [initialCommitBusy, setInitialCommitBusy] = createSignal(false);
   const [authorName, setAuthorName] = createSignal("");
   const [authorEmail, setAuthorEmail] = createSignal("");
+  const [systemRuntime, setSystemRuntime] = createSignal<SystemRuntimeSnapshot>();
+  const runtimeApiAvailable = typeof options.commandPort.getSystemRuntime === "function";
 
-  const load = async (projectId: string, force = false) => {
+  const gitTool = createMemo(() => systemRuntime()?.tools.find((tool) => tool.tool === "git"));
+  const shellTool = createMemo(() =>
+    systemRuntime()?.tools.find((tool) => tool.tool === "default_shell"),
+  );
+  const hasCapability = (capability: SystemToolCapability) =>
+    !runtimeApiAvailable || Boolean(gitTool()?.capabilities.includes(capability));
+  const runtimeReason = createMemo(() => {
+    const tool = gitTool();
+    if (!runtimeApiAvailable || tool?.state === "ready") return undefined;
+    return tool?.errorCode ?? "system_git_missing";
+  });
+
+  async function loadSystemRuntime(refresh = false) {
+    if (!runtimeApiAvailable) return;
+    try {
+      const next = refresh
+        ? await options.commandPort.refreshSystemRuntime()
+        : await options.commandPort.getSystemRuntime();
+      setSystemRuntime(next);
+      const projectId = untrack(options.selectedProject)?.id;
+      const git = next.tools.find((tool) => tool.tool === "git");
+      if (refresh && projectId && git?.capabilities.includes("git_inspect")) {
+        await load(projectId, true);
+      }
+    } catch (error) {
+      options.onFailure(commandFailure(error).message);
+    }
+  }
+
+  let stopRuntimeListener: UnlistenFn | undefined;
+  onMount(() => {
+    void loadSystemRuntime();
+    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
+    void listen<SystemRuntimeSnapshot>("system-runtime-changed", ({ payload }) => {
+      setSystemRuntime(payload);
+    }).then((stop) => {
+      stopRuntimeListener = stop;
+    });
+  });
+  onCleanup(() => stopRuntimeListener?.());
+
+  async function load(projectId: string, force = false) {
     setLoading(true);
     try {
       const next = force
@@ -60,7 +115,7 @@ export function createProjectGitController(options: {
     } finally {
       if (untrack(options.selectedProject)?.id === projectId) setLoading(false);
     }
-  };
+  }
 
   const selectedProjectId = createMemo(() => options.selectedProject()?.id);
   createEffect(() => {
@@ -106,6 +161,17 @@ export function createProjectGitController(options: {
     baseRevision,
     setExecutionKind,
     setBaseRevision,
+    gitInspectReady: () => hasCapability("git_inspect"),
+    gitMutationReady: () => hasCapability("git_local_mutation"),
+    gitWorktreeReady: () => hasCapability("git_worktree"),
+    shellReady: () =>
+      !runtimeApiAvailable || Boolean(shellTool()?.capabilities.includes("shell_interactive")),
+    shellRuntimeReason: () =>
+      !runtimeApiAvailable || shellTool()?.state === "ready"
+        ? undefined
+        : (shellTool()?.errorCode ?? "system_shell_missing"),
+    runtimeReason,
+    refreshRuntime: () => void loadSystemRuntime(true),
     refresh: () => {
       const projectId = options.selectedProject()?.id;
       if (projectId) void load(projectId, true);
@@ -113,7 +179,9 @@ export function createProjectGitController(options: {
     resetForDraft: () => {
       setExecutionKind("local");
     },
-    openInitialCommit: () => setInitialCommitOpen(true),
+    openInitialCommit: () => {
+      if (hasCapability("git_local_mutation")) setInitialCommitOpen(true);
+    },
     initialCommitDialog: () => (
       <ProjectGitInitialCommitDialog
         open={initialCommitOpen()}

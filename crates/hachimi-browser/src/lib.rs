@@ -3,6 +3,7 @@
 mod broker;
 mod cef_ipc;
 mod chrome_extension;
+mod mac_input;
 mod network_target;
 
 pub use broker::{
@@ -12,12 +13,13 @@ pub use broker::{
 pub use cef_ipc::{
     CEF_IPC_PROTOCOL_VERSION, CefBounds, CefBrowserShortcut, CefHostCommand,
     CefHostCommandEnvelope, CefHostEvent, CefHostFailure, CefHostMessage, CefHostResponse,
-    CefObservation, CefTabState,
+    CefInputEvent, CefKeyEventKind, CefMouseButton, CefObservation, CefTabState, cef_event_flags,
 };
 pub use chrome_extension::{
     BrokerActionPayload, BrokerObservationPayload, ChromeExtensionBroker, ExtensionCommand,
     ExtensionCommandKind, ExtensionCommandResult,
 };
+pub use mac_input::{mac_event_modifiers_to_cef, mac_key_code_to_windows_vk};
 pub use network_target::validate_agent_browser_target;
 
 use std::{

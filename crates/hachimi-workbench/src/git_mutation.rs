@@ -1,59 +1,83 @@
 use std::path::Path;
 
 use hachimi_protocol::{WorkbenchGitPhaseResult, WorkbenchGitPhaseStatus};
+use hachimi_system_runtime::SystemRuntimeManager;
 
 use super::{WorkbenchError, git_optional, git_required};
 
 pub(super) async fn switch_branch(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     branch: &str,
     remote: bool,
 ) -> Result<WorkbenchGitPhaseResult, WorkbenchError> {
-    let branch = validate_branch_name(root, branch).await?;
+    let branch = validate_branch_name(runtime, root, branch).await?;
     let result = if remote {
         let (_, local) = branch
             .split_once('/')
             .filter(|(remote, local)| !remote.is_empty() && !local.is_empty())
             .ok_or_else(|| WorkbenchError::Git("remote branch must include its remote".into()))?;
-        let local = validate_branch_name(root, local).await?;
-        ensure_ref(root, &format!("refs/remotes/{branch}"), true).await?;
-        ensure_ref(root, &format!("refs/heads/{local}"), false).await?;
-        git_required(root, &["switch", "-c", local, "--track", branch], None).await
+        let local = validate_branch_name(runtime, root, local).await?;
+        ensure_ref(runtime, root, &format!("refs/remotes/{branch}"), true).await?;
+        ensure_ref(runtime, root, &format!("refs/heads/{local}"), false).await?;
+        git_required(
+            runtime,
+            root,
+            &["switch", "-c", local, "--track", branch],
+            None,
+        )
+        .await
     } else {
-        ensure_ref(root, &format!("refs/heads/{branch}"), true).await?;
-        git_required(root, &["switch", branch], None).await
+        ensure_ref(runtime, root, &format!("refs/heads/{branch}"), true).await?;
+        git_required(runtime, root, &["switch", branch], None).await
     };
     Ok(phase(result))
 }
 
 pub(super) async fn create_branch(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     branch: &str,
 ) -> Result<WorkbenchGitPhaseResult, WorkbenchError> {
-    let branch = validate_branch_name(root, branch).await?;
-    ensure_ref(root, &format!("refs/heads/{branch}"), false).await?;
+    let branch = validate_branch_name(runtime, root, branch).await?;
+    ensure_ref(runtime, root, &format!("refs/heads/{branch}"), false).await?;
     Ok(phase(
-        git_required(root, &["switch", "-c", branch], None).await,
+        git_required(runtime, root, &["switch", "-c", branch], None).await,
     ))
 }
 
-async fn validate_branch_name<'a>(root: &Path, branch: &'a str) -> Result<&'a str, WorkbenchError> {
+async fn validate_branch_name<'a>(
+    runtime: &SystemRuntimeManager,
+    root: &Path,
+    branch: &'a str,
+) -> Result<&'a str, WorkbenchError> {
     let branch = branch.trim();
     if branch.is_empty() || branch.starts_with('-') || branch.chars().count() > 255 {
         return Err(WorkbenchError::Git("invalid branch name".into()));
     }
-    git_required(root, &["check-ref-format", "--branch", branch], None).await?;
+    git_required(
+        runtime,
+        root,
+        &["check-ref-format", "--branch", branch],
+        None,
+    )
+    .await?;
     Ok(branch)
 }
 
 async fn ensure_ref(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     reference: &str,
     should_exist: bool,
 ) -> Result<(), WorkbenchError> {
-    let exists = git_optional(root, &["show-ref", "--verify", "--hash", reference])
-        .await?
-        .is_some();
+    let exists = git_optional(
+        runtime,
+        root,
+        &["show-ref", "--verify", "--hash", reference],
+    )
+    .await?
+    .is_some();
     if exists != should_exist {
         let state = if should_exist {
             "does not exist"
@@ -111,16 +135,21 @@ mod tests {
         git(local.path(), &["push", "origin", "feature/nested"]);
         git(local.path(), &["branch", "-D", "feature/nested"]);
         git(local.path(), &["fetch", "origin"]);
+        let runtime = SystemRuntimeManager::new();
 
         assert!(
-            switch_branch(local.path(), "--upload-pack=x", false)
+            switch_branch(&runtime, local.path(), "--upload-pack=x", false)
                 .await
                 .is_err()
         );
-        let result = switch_branch(local.path(), "origin/feature/nested", true)
+        let result = switch_branch(&runtime, local.path(), "origin/feature/nested", true)
             .await
             .expect("tracking branch");
         assert_eq!(result.status, WorkbenchGitPhaseStatus::Succeeded);
-        assert!(create_branch(local.path(), "feature/nested").await.is_err());
+        assert!(
+            create_branch(&runtime, local.path(), "feature/nested")
+                .await
+                .is_err()
+        );
     }
 }

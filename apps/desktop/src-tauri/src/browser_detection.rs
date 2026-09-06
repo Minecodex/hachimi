@@ -21,10 +21,18 @@ fn detect_browser(kind: SystemBrowserKind) -> Option<SystemBrowserInstallation> 
         SystemBrowserKind::Chrome => "chrome.exe",
         SystemBrowserKind::Edge => "msedge.exe",
     };
+    let path_names: &[&str] = if cfg!(target_os = "macos") {
+        match kind {
+            SystemBrowserKind::Chrome => &["Google Chrome"],
+            SystemBrowserKind::Edge => &["Microsoft Edge"],
+        }
+    } else {
+        &[executable_name]
+    };
     let mut candidates = registry_app_paths(executable_name);
     candidates.extend(standard_paths(kind));
-    candidates.extend(path_candidates(executable_name));
-    let executable = candidates
+    let executable = hachimi_system_runtime::system_runtime_manager()
+        .executable_candidates(path_names, candidates)
         .into_iter()
         .find(|candidate| candidate.is_file())?;
     let version = registry_version(kind).or_else(|| executable_version(&executable));
@@ -120,31 +128,6 @@ fn standard_paths(kind: SystemBrowserKind) -> Vec<PathBuf> {
 
 #[cfg(not(any(windows, target_os = "macos")))]
 fn standard_paths(_kind: SystemBrowserKind) -> Vec<PathBuf> {
-    Vec::new()
-}
-
-#[cfg(windows)]
-fn path_candidates(executable: &str) -> Vec<PathBuf> {
-    let output = std::process::Command::new("where.exe")
-        .arg(executable)
-        .creation_flags(0x0800_0000)
-        .output();
-    output
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|text| {
-            text.lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(PathBuf::from)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-#[cfg(not(windows))]
-fn path_candidates(_executable: &str) -> Vec<PathBuf> {
     Vec::new()
 }
 

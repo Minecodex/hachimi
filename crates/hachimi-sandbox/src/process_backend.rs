@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use zeroize::Zeroize;
 
 const MAX_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
+#[cfg(windows)]
 const ALLOWED_ENVIRONMENT: &[&str] = &[
     "PATH",
     "PATHEXT",
@@ -35,6 +36,28 @@ const ALLOWED_ENVIRONMENT: &[&str] = &[
     "LC_ALL",
     "HACHIMI_WORKSPACE_WORKER_TOKEN",
     "HACHIMI_GIT_EXECUTABLE",
+    "HACHIMI_GIT_RUNTIME_REVISION",
+    "HACHIMI_GIT_DIR_ALIAS",
+    "HACHIMI_GIT_WORK_TREE_ALIAS",
+    "HACHIMI_GIT_WORK_TREE_REAL",
+];
+
+#[cfg(not(windows))]
+const ALLOWED_ENVIRONMENT: &[&str] = &[
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+    "SSH_AUTH_SOCK",
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+    "HACHIMI_WORKSPACE_WORKER_TOKEN",
+    "HACHIMI_GIT_EXECUTABLE",
+    "HACHIMI_GIT_RUNTIME_REVISION",
     "HACHIMI_GIT_DIR_ALIAS",
     "HACHIMI_GIT_WORK_TREE_ALIAS",
     "HACHIMI_GIT_WORK_TREE_REAL",
@@ -65,6 +88,9 @@ pub struct SandboxLaunchSpec {
     pub timeout: Duration,
     pub output_limit: usize,
     pub network_policy: SandboxNetworkPolicy,
+    /// Set only while a verified Git mutation lease is held: lifts the
+    /// read-only `.git` carve-out inside writable roots for this one launch.
+    pub git_metadata_writable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,9 +157,27 @@ impl SandboxedChild {
 impl Drop for SandboxedChild {
     fn drop(&mut self) {
         if let Some(child) = self.child.as_mut() {
-            let _ = child.start_kill();
+            terminate_process_tree(child);
         }
     }
+}
+
+#[cfg(windows)]
+fn terminate_process_tree(child: &mut Child) {
+    let _ = child.start_kill();
+}
+
+/// unix backends spawn the child as a process-group leader, so the kernel
+/// can reap the whole tree. killpg is a no-op (ESRCH) when the child never
+/// formed a group, and the pid kill is the fallback for that case.
+#[cfg(unix)]
+fn terminate_process_tree(child: &mut Child) {
+    if let Some(pid) = child.id() {
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+    let _ = child.start_kill();
 }
 
 #[derive(Debug, Error)]
@@ -195,6 +239,63 @@ pub(crate) fn spawn_with_launcher(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        let mut child = command.spawn().map_err(SandboxError::Spawn)?;
+        if let Some(mut input) = spec.stdin {
+            use tokio::io::AsyncWriteExt as _;
+
+            let mut stdin = child.stdin.take().ok_or_else(|| {
+                SandboxError::Spawn(std::io::Error::other(
+                    "restricted process stdin is unavailable",
+                ))
+            })?;
+            stdin.write_all(&input).await.map_err(SandboxError::Spawn)?;
+            stdin.shutdown().await.map_err(SandboxError::Spawn)?;
+            input.zeroize();
+        }
+        Ok(SandboxedChild::new(
+            child,
+            cancellation,
+            spec.timeout,
+            spec.output_limit,
+        ))
+    })
+}
+
+/// macOS Seatbelt launch path: wraps the target in `/usr/bin/sandbox-exec`
+/// with a grant-derived SBPL profile instead of the Windows launcher binary.
+#[cfg(target_os = "macos")]
+pub(crate) fn spawn_with_seatbelt(
+    spec: SandboxLaunchSpec,
+    cancellation: CancellationToken,
+) -> SandboxSpawnFuture<'static> {
+    Box::pin(async move {
+        validate_launch_spec(&spec)?;
+        for (name, _) in &spec.environment {
+            let normalized = name.to_string_lossy().to_ascii_uppercase();
+            if !ALLOWED_ENVIRONMENT.contains(&normalized.as_str()) {
+                return Err(SandboxError::ForbiddenEnvironment(
+                    name.to_string_lossy().into_owned(),
+                ));
+            }
+        }
+        let arguments = crate::seatbelt::seatbelt_command_args(&spec)?;
+        let mut command = Command::new(crate::seatbelt::SEATBELT_EXECUTABLE);
+        ProcessPolicy::HiddenCaptured.apply_tokio(&mut command);
+        command
+            .args(arguments)
+            .current_dir(&spec.cwd)
+            .env_clear()
+            .envs(spec.environment.clone())
+            .stdin(if spec.stdin.is_some() || spec.interactive_stdin {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        // Process-group leader so cancellation can reap the whole tree (killpg).
+        command.process_group(0);
         let mut child = command.spawn().map_err(SandboxError::Spawn)?;
         if let Some(mut input) = spec.stdin {
             use tokio::io::AsyncWriteExt as _;
@@ -376,6 +477,7 @@ mod tests {
             timeout: Duration::from_secs(5),
             output_limit: 1024,
             network_policy: SandboxNetworkPolicy::DenyAll,
+            git_metadata_writable: false,
         }
     }
 

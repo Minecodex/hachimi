@@ -484,8 +484,17 @@ impl McpStdioSandboxHost {
         }
         validate_checkout_root(&cwd)
             .map_err(|_| McpClientError::HostSandbox("mcp_host_cwd_rejected"))?;
-        prepare_workspace_acl(&cwd, &temp_root, &executable)
-            .map_err(|_| McpClientError::HostSandbox("mcp_host_acl_preparation_failed"))?;
+        let git = hachimi_system_runtime::system_runtime_manager()
+            .require_git(hachimi_protocol::SystemToolCapability::GitInspect)
+            .ok();
+        prepare_workspace_acl(
+            &cwd,
+            &temp_root,
+            &executable,
+            git.as_ref()
+                .map(hachimi_system_runtime::GitRuntimeLease::executable),
+        )
+        .map_err(|_| McpClientError::HostSandbox("mcp_host_acl_preparation_failed"))?;
 
         config.command = executable.clone();
         config.cwd = Some(cwd.clone());
@@ -546,6 +555,7 @@ impl McpStdioSandboxHost {
             timeout: Duration::from_secs(24 * 60 * 60),
             output_limit: config.max_message_bytes,
             network_policy: SandboxNetworkPolicy::DenyAll,
+            git_metadata_writable: false,
         };
         McpStdioClient::connect_sandboxed(config, Arc::clone(&self.backend), launch, cancellation)
             .await
@@ -572,15 +582,27 @@ fn restricted_mcp_environment(temp_root: &std::path::Path) -> Vec<(OsString, OsS
         .filter(|(name, _)| {
             !matches!(
                 name.to_str(),
-                Some("TEMP" | "TMP" | "USERPROFILE" | "LOCALAPPDATA" | "APPDATA")
+                Some(
+                    "TEMP" | "TMP" | "TMPDIR" | "HOME" | "USERPROFILE" | "LOCALAPPDATA" | "APPDATA"
+                )
             )
         })
         .collect::<Vec<_>>();
-    environment.push(("TEMP".into(), temp_root.as_os_str().to_owned()));
-    environment.push(("TMP".into(), temp_root.as_os_str().to_owned()));
-    environment.push(("USERPROFILE".into(), temp_root.as_os_str().to_owned()));
-    environment.push(("LOCALAPPDATA".into(), temp_root.as_os_str().to_owned()));
-    environment.push(("APPDATA".into(), temp_root.as_os_str().to_owned()));
+    #[cfg(windows)]
+    environment.extend([
+        ("TEMP".into(), temp_root.as_os_str().to_owned()),
+        ("TMP".into(), temp_root.as_os_str().to_owned()),
+        ("USERPROFILE".into(), temp_root.as_os_str().to_owned()),
+        ("LOCALAPPDATA".into(), temp_root.as_os_str().to_owned()),
+        ("APPDATA".into(), temp_root.as_os_str().to_owned()),
+    ]);
+    #[cfg(not(windows))]
+    environment.extend([
+        ("TMPDIR".into(), temp_root.as_os_str().to_owned()),
+        ("TEMP".into(), temp_root.as_os_str().to_owned()),
+        ("TMP".into(), temp_root.as_os_str().to_owned()),
+        ("HOME".into(), temp_root.as_os_str().to_owned()),
+    ]);
     environment
 }
 

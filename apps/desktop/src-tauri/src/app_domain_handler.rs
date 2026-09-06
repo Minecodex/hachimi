@@ -77,6 +77,7 @@ pub(super) struct DesktopAppDomainHandler {
     scheduler: Arc<hachimi_scheduler::SchedulerService>,
     processes: Arc<ProcessRegistry>,
     sandbox_runtime: Arc<SandboxRuntimeManager>,
+    system_runtime: hachimi_system_runtime::SystemRuntimeManager,
     run_launcher: Arc<dyn DesktopDomainRunLauncher>,
     workspace_watches: Arc<Mutex<BTreeMap<hachimi_protocol::FsWatchId, ActiveWorkspaceWatch>>>,
     workspace_searches: Arc<Mutex<BTreeMap<hachimi_protocol::FsSearchId, ActiveWorkspaceSearch>>>,
@@ -98,6 +99,7 @@ pub(super) struct DesktopAppDomainDependencies {
     pub scheduler: Arc<hachimi_scheduler::SchedulerService>,
     pub processes: Arc<ProcessRegistry>,
     pub sandbox_runtime: Arc<SandboxRuntimeManager>,
+    pub system_runtime: hachimi_system_runtime::SystemRuntimeManager,
     pub run_launcher: Arc<dyn DesktopDomainRunLauncher>,
     pub workspace_watches: Arc<Mutex<BTreeMap<hachimi_protocol::FsWatchId, ActiveWorkspaceWatch>>>,
     pub workspace_searches:
@@ -133,6 +135,7 @@ impl DesktopAppDomainHandler {
             scheduler,
             processes,
             sandbox_runtime,
+            system_runtime,
             run_launcher,
             workspace_watches,
             workspace_searches,
@@ -151,6 +154,7 @@ impl DesktopAppDomainHandler {
             scheduler,
             processes,
             sandbox_runtime,
+            system_runtime,
             run_launcher,
             workspace_watches,
             workspace_searches,
@@ -1080,12 +1084,17 @@ impl DesktopAppDomainHandler {
         }
     }
 
-    fn workspace_client(workspace: &DomainWorkspace) -> WorkspaceHostClient {
-        WorkspaceHostClient::new(
+    fn workspace_client(&self, workspace: &DomainWorkspace) -> WorkspaceHostClient {
+        let git = self
+            .system_runtime
+            .require_git(hachimi_protocol::SystemToolCapability::GitInspect)
+            .ok();
+        WorkspaceHostClient::new_with_git_runtime(
             workspace_worker_path(),
             &workspace.checkout.path,
             workspace.checkout.id.as_str(),
             workspace.run.generation,
+            git,
         )
     }
 
@@ -1117,7 +1126,8 @@ impl DesktopAppDomainHandler {
                 let workspace = self
                     .resolve_session_workspace(&request.session_id, &request.checkout_id)
                     .await?;
-                match Self::workspace_client(&workspace)
+                match self
+                    .workspace_client(&workspace)
                     .execute(
                         WorkspaceOperation::ListDirectoryPage {
                             path: request.path,
@@ -1138,7 +1148,8 @@ impl DesktopAppDomainHandler {
                 let workspace = self
                     .resolve_session_workspace(&request.session_id, &request.checkout_id)
                     .await?;
-                match Self::workspace_client(&workspace)
+                match self
+                    .workspace_client(&workspace)
                     .execute(
                         WorkspaceOperation::ReadFileChunk {
                             path: request.path,
@@ -1174,7 +1185,8 @@ impl DesktopAppDomainHandler {
                     FsAppResponse::Diff(snapshot)
                 } else {
                     let base_revision = self.diff_base_revision(&scope, &workspace).await?;
-                    match Self::workspace_client(&workspace)
+                    match self
+                        .workspace_client(&workspace)
                         .execute(
                             WorkspaceOperation::GitDiffStructured {
                                 scope,
@@ -1241,7 +1253,8 @@ impl DesktopAppDomainHandler {
                     | DiffScope::Branch { .. } => {
                         let base_revision =
                             self.diff_base_revision(&request.scope, &workspace).await?;
-                        match Self::workspace_client(&workspace)
+                        match self
+                            .workspace_client(&workspace)
                             .execute(
                                 WorkspaceOperation::GitDiffFileChunk {
                                     scope: request.scope,
@@ -1270,7 +1283,8 @@ impl DesktopAppDomainHandler {
                     .resolve_session_workspace(&request.session_id, &request.checkout_id)
                     .await?;
                 let cancellation = tokio_util::sync::CancellationToken::new();
-                let watch = Self::workspace_client(&workspace)
+                let watch = self
+                    .workspace_client(&workspace)
                     .start_watch(
                         request.session_id.clone(),
                         request.path,
@@ -1305,7 +1319,8 @@ impl DesktopAppDomainHandler {
                     .resolve_session_workspace(&request.session_id, &request.checkout_id)
                     .await?;
                 let search_id = hachimi_protocol::FsSearchId::random();
-                let search = Self::workspace_client(&workspace)
+                let search = self
+                    .workspace_client(&workspace)
                     .start_file_search(
                         search_id.clone(),
                         request.query.clone(),

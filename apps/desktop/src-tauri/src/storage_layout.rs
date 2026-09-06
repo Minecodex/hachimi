@@ -50,7 +50,10 @@ impl StorageLayout {
     }
 
     pub(crate) fn sandbox_setup_marker(&self) -> PathBuf {
-        self.root.join("sandbox/windows/setup.json")
+        self.root
+            .join("sandbox")
+            .join(hachimi_sandbox::backend_dir_key())
+            .join("setup.json")
     }
 }
 

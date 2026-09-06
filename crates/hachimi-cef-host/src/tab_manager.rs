@@ -5,13 +5,37 @@ use std::sync::Arc;
 use cef::*;
 use hachimi_browser::{
     CefBounds, CefBrowserShortcut, CefHostCommand, CefHostCommandEnvelope, CefHostEvent,
-    CefHostFailure, CefHostMessage, CefHostResponse, CefObservation, CefTabState,
+    CefHostFailure, CefHostMessage, CefHostResponse, CefInputEvent, CefKeyEventKind,
+    CefMouseButton, CefObservation, CefTabState,
 };
 use hachimi_protocol::{BrowserNavigationErrorKind, BrowserTabId};
 use parking_lot::Mutex;
 
 use crate::error_page::{error_page, navigation_error};
 use crate::ipc::EventSink;
+
+/// The OS window handle type used by the CEF embedding surface: an HWND on
+/// Windows, an NSView pointer on macOS.
+#[cfg(target_os = "windows")]
+type NativeWindowHandle = *mut sys::HWND__;
+#[cfg(not(target_os = "windows"))]
+type NativeWindowHandle = sys::cef_window_handle_t;
+
+#[cfg(target_os = "windows")]
+fn native_handle(host: &BrowserHost) -> NativeWindowHandle {
+    host.window_handle().0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn native_handle(host: &BrowserHost) -> NativeWindowHandle {
+    host.window_handle()
+}
+
+/// The OS key-event payload type in the CEF keyboard handler contract.
+#[cfg(target_os = "windows")]
+type OsEvent<'a> = Option<&'a mut sys::MSG>;
+#[cfg(not(target_os = "windows"))]
+type OsEvent<'a> = *mut u8;
 
 struct ManagedTab {
     browser: Option<Browser>,
@@ -25,6 +49,10 @@ struct ManagedTab {
 
 #[derive(Default)]
 struct ManagerState {
+    /// macOS prototype OSR mode (P4-A): render windowless, frames land in
+    /// `frames_dir` for the desktop to composite.
+    osr: bool,
+    frames_dir: Option<PathBuf>,
     context_ready: bool,
     shutting_down: bool,
     parent_hwnd: usize,
@@ -41,10 +69,22 @@ pub struct TabManager {
 }
 
 impl TabManager {
+    #[cfg(not(target_os = "macos"))]
     pub fn new(parent_hwnd: usize, sink: EventSink) -> Self {
+        Self::new_with_osr(parent_hwnd, sink, false, None)
+    }
+
+    pub fn new_with_osr(
+        parent_hwnd: usize,
+        sink: EventSink,
+        osr: bool,
+        frames_dir: Option<PathBuf>,
+    ) -> Self {
         Self {
             sink,
             state: Arc::new(Mutex::new(ManagerState {
+                osr,
+                frames_dir,
                 parent_hwnd,
                 ..ManagerState::default()
             })),
@@ -57,6 +97,66 @@ impl TabManager {
 
     pub fn is_empty(&self) -> bool {
         self.state.lock().tabs.is_empty()
+    }
+
+    fn is_osr(&self) -> bool {
+        cfg!(target_os = "macos") && self.state.lock().osr
+    }
+
+    #[cfg(target_os = "macos")]
+    fn tab_bounds(&self, tab_id: &BrowserTabId) -> CefBounds {
+        self.state
+            .lock()
+            .tabs
+            .get(tab_id)
+            .map(|tab| tab.bounds)
+            .unwrap_or(CefBounds {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+                scale_factor: 1.0,
+            })
+    }
+
+    /// OSR frame sink (P4-A prototype): writes the latest BGRA frame of the
+    /// tab to `<frames_dir>/<tab>.bgra` plus a small JSON header. The desktop
+    /// probe composites these into its window.
+    #[cfg(target_os = "macos")]
+    fn write_frame(&self, tab_id: &BrowserTabId, buffer: *const u8, width: i32, height: i32) {
+        if buffer.is_null() || width <= 0 || height <= 0 {
+            return;
+        }
+        let Some(frames_dir) = self.state.lock().frames_dir.clone() else {
+            return;
+        };
+        if std::fs::create_dir_all(&frames_dir).is_err() {
+            return;
+        }
+        let len = (width as usize) * (height as usize) * 4;
+        let bytes = unsafe { std::slice::from_raw_parts(buffer, len) };
+        let base = frames_dir.join(tab_id.as_str());
+        let tmp = frames_dir.join(format!("{}.tmp", tab_id.as_str()));
+        if std::fs::write(&tmp, bytes).is_err() {
+            return;
+        }
+        if std::fs::rename(&tmp, base.with_extension("bgra")).is_err() {
+            return;
+        }
+        let header = serde_json::json!({ "width": width, "height": height });
+        let _ = std::fs::write(
+            base.with_extension("json"),
+            serde_json::to_vec(&header).unwrap_or_default(),
+        );
+        // Notify the desktop composite so it can refresh the overlay without
+        // polling the frames directory.
+        self.sink.send(&CefHostMessage::Event {
+            event: CefHostEvent::FrameReady {
+                tab_id: tab_id.clone(),
+                width: width as u32,
+                height: height as u32,
+            },
+        });
     }
 
     pub fn dispatch(&self, envelope: CefHostCommandEnvelope) {
@@ -160,6 +260,7 @@ impl TabManager {
                 params,
                 full_access,
             } => return self.devtools(request_id, &tab_id, &method, params, full_access),
+            CefHostCommand::SendInput { tab_id, event } => self.send_input(&tab_id, &event),
             CefHostCommand::Shutdown => self.shutdown(),
         };
         if request_id != u64::MAX {
@@ -235,8 +336,29 @@ impl TabManager {
             width: i32::try_from(bounds.width).unwrap_or(i32::MAX),
             height: i32::try_from(bounds.height).unwrap_or(i32::MAX),
         };
-        let parent_hwnd = self.state.lock().parent_hwnd;
+        let (osr, parent_hwnd) = {
+            let state = self.state.lock();
+            (state.osr, state.parent_hwnd)
+        };
+        #[cfg(target_os = "windows")]
         let parent = sys::HWND(parent_hwnd as *mut sys::HWND__);
+        #[cfg(not(target_os = "windows"))]
+        let parent = parent_hwnd as NativeWindowHandle;
+        #[cfg(target_os = "macos")]
+        let window_info = if osr {
+            WindowInfo {
+                runtime_style: RuntimeStyle::ALLOY,
+                ..WindowInfo::default()
+            }
+            .set_as_windowless(std::ptr::null_mut())
+        } else {
+            WindowInfo {
+                runtime_style: RuntimeStyle::ALLOY,
+                ..WindowInfo::default()
+            }
+            .set_as_child(parent, &rect)
+        };
+        #[cfg(not(target_os = "macos"))]
         let window_info = WindowInfo {
             runtime_style: RuntimeStyle::ALLOY,
             ..WindowInfo::default()
@@ -305,7 +427,7 @@ impl TabManager {
                     tab.browser.as_ref().and_then(|browser| {
                         browser
                             .host()
-                            .map(|host| (host.window_handle().0, tab.bounds, tab.visible))
+                            .map(|host| (native_handle(&host), tab.bounds, tab.visible))
                     })
                 })
                 .collect::<Vec<_>>()
@@ -322,21 +444,24 @@ impl TabManager {
         if !self.state.lock().tabs.contains_key(tab_id) {
             return Err(tab_missing(tab_id));
         }
-        let windows = self
+        let hosts = self
             .state
             .lock()
             .tabs
             .iter()
             .filter_map(|(id, tab)| {
-                tab.browser.as_ref().and_then(|browser| {
-                    browser
-                        .host()
-                        .map(|host| (id == tab_id, host.window_handle().0))
-                })
+                tab.browser
+                    .as_ref()
+                    .and_then(|browser| browser.host().map(|host| (id == tab_id, host)))
             })
             .collect::<Vec<_>>();
-        for (active, window) in windows {
-            show_window(window, active);
+        let osr = self.is_osr();
+        for (active, host) in hosts {
+            // OSR: only the active tab should produce frames.
+            if osr {
+                host.was_hidden(if active { 0 } else { 1 });
+            }
+            show_window(native_handle(&host), active);
         }
         Ok(CefHostResponse::Acknowledged)
     }
@@ -353,18 +478,25 @@ impl TabManager {
                 false,
             )
         })?;
-        let window = {
+        let (window, host) = {
             let mut state = self.state.lock();
             let tab = state
                 .tabs
                 .get_mut(tab_id)
                 .ok_or_else(|| tab_missing(tab_id))?;
             tab.bounds = bounds;
-            tab.browser
-                .as_ref()
-                .and_then(Browser::host)
-                .map(|host| host.window_handle().0)
+            let host = tab.browser.as_ref().and_then(Browser::host);
+            (host.as_ref().map(native_handle), host)
         };
+        // Windowless (OSR) hosts must be told explicitly that the stored
+        // bounds (and possibly the scale factor) changed, otherwise CEF keeps
+        // rendering at the creation-time size.
+        if self.is_osr()
+            && let Some(host) = host.as_ref()
+        {
+            host.was_resized();
+            host.notify_screen_info_changed();
+        }
         if let Some(window) = window {
             move_window(window, bounds);
         }
@@ -376,18 +508,22 @@ impl TabManager {
         tab_id: &BrowserTabId,
         visible: bool,
     ) -> Result<CefHostResponse, CefHostFailure> {
-        let window = {
+        let (window, host) = {
             let mut state = self.state.lock();
             let tab = state
                 .tabs
                 .get_mut(tab_id)
                 .ok_or_else(|| tab_missing(tab_id))?;
             tab.visible = visible;
-            tab.browser
-                .as_ref()
-                .and_then(Browser::host)
-                .map(|host| host.window_handle().0)
+            let host = tab.browser.as_ref().and_then(Browser::host);
+            (host.as_ref().map(native_handle), host)
         };
+        // OSR: hidden browsers stop producing frames.
+        if self.is_osr()
+            && let Some(host) = host.as_ref()
+        {
+            host.was_hidden(if visible { 0 } else { 1 });
+        }
         if let Some(window) = window {
             show_window(window, visible);
         }
@@ -450,6 +586,97 @@ impl TabManager {
                 .host()
                 .ok_or_else(|| runtime_missing(tab_id))?
                 .set_focus(1);
+            Ok(CefHostResponse::Acknowledged)
+        })
+    }
+
+    /// Forwards a native input event from the desktop's overlay view into the
+    /// windowless (OSR) browser. Like the keyboard handler path, real user
+    /// input clears the agent navigation policy and bumps the input epoch.
+    fn send_input(
+        &self,
+        tab_id: &BrowserTabId,
+        event: &CefInputEvent,
+    ) -> Result<CefHostResponse, CefHostFailure> {
+        self.user_input(tab_id);
+        self.with_browser(tab_id, |browser| {
+            let host = browser.host().ok_or_else(|| runtime_missing(tab_id))?;
+            match event {
+                CefInputEvent::MouseMove {
+                    x,
+                    y,
+                    modifiers,
+                    leave,
+                } => {
+                    let event = MouseEvent {
+                        x: *x,
+                        y: *y,
+                        modifiers: *modifiers,
+                    };
+                    host.send_mouse_move_event(Some(&event), i32::from(*leave));
+                }
+                CefInputEvent::MouseButton {
+                    x,
+                    y,
+                    modifiers,
+                    button,
+                    up,
+                    click_count,
+                } => {
+                    let event = MouseEvent {
+                        x: *x,
+                        y: *y,
+                        modifiers: *modifiers,
+                    };
+                    let button = match button {
+                        CefMouseButton::Left => MouseButtonType::LEFT,
+                        CefMouseButton::Middle => MouseButtonType::MIDDLE,
+                        CefMouseButton::Right => MouseButtonType::RIGHT,
+                    };
+                    host.send_mouse_click_event(Some(&event), button, i32::from(*up), *click_count);
+                }
+                CefInputEvent::MouseWheel {
+                    x,
+                    y,
+                    modifiers,
+                    delta_x,
+                    delta_y,
+                } => {
+                    let event = MouseEvent {
+                        x: *x,
+                        y: *y,
+                        modifiers: *modifiers,
+                    };
+                    host.send_mouse_wheel_event(Some(&event), *delta_x, *delta_y);
+                }
+                CefInputEvent::Key {
+                    kind,
+                    windows_key_code,
+                    native_key_code,
+                    modifiers,
+                    character,
+                    unmodified_character,
+                } => {
+                    let type_ = match kind {
+                        CefKeyEventKind::RawKeyDown => KeyEventType::RAWKEYDOWN,
+                        CefKeyEventKind::KeyDown => KeyEventType::KEYDOWN,
+                        CefKeyEventKind::KeyUp => KeyEventType::KEYUP,
+                        CefKeyEventKind::Char => KeyEventType::CHAR,
+                    };
+                    let event = KeyEvent {
+                        type_,
+                        modifiers: *modifiers,
+                        windows_key_code: *windows_key_code,
+                        native_key_code: *native_key_code,
+                        is_system_key: 0,
+                        character: *character,
+                        unmodified_character: *unmodified_character,
+                        focus_on_editable_field: 0,
+                        ..KeyEvent::default()
+                    };
+                    host.send_key_event(Some(&event));
+                }
+            }
             Ok(CefHostResponse::Acknowledged)
         })
     }
@@ -747,9 +974,17 @@ impl TabManager {
             if let Some(tab) = self.state.lock().tabs.get_mut(tab_id) {
                 tab.devtools_registration = registration;
             }
-            let window = host.window_handle().0;
+            let window = native_handle(&host);
             move_window(window, bounds);
             show_window(window, visible);
+        }
+        // macOS OSR: windowless browsers stay on about:blank after creation;
+        // kick the initial navigation explicitly.
+        #[cfg(target_os = "macos")]
+        if self.state.lock().osr && !state.url.is_empty() {
+            if let Some(frame) = browser.main_frame() {
+                frame.load_url(Some(&CefString::from(state.url.as_str())));
+            }
         }
         if let Some(request_id) = create_request_id {
             self.sink.response(
@@ -1091,6 +1326,16 @@ wrap_client! {
         fn request_handler(&self) -> Option<RequestHandler> {
             Some(HachimiRequestHandler::new(self.manager.clone(), self.tab_id.clone()))
         }
+
+        fn render_handler(&self) -> Option<RenderHandler> {
+            if self.manager.is_osr() {
+                return Some(HachimiRenderHandler::new(
+                    self.manager.clone(),
+                    self.tab_id.clone(),
+                ));
+            }
+            None
+        }
     }
 }
 
@@ -1209,7 +1454,7 @@ wrap_keyboard_handler! {
             &self,
             _browser: Option<&mut Browser>,
             event: Option<&KeyEvent>,
-            _os_event: Option<&mut sys::MSG>,
+            _os_event: OsEvent<'_>,
             _is_keyboard_shortcut: Option<&mut i32>,
         ) -> i32 {
             self.manager.user_input(&self.tab_id);
@@ -1218,6 +1463,65 @@ wrap_keyboard_handler! {
             };
             self.manager.shortcut_requested(&self.tab_id, shortcut);
             1
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+wrap_render_handler! {
+    struct HachimiRenderHandler {
+        manager: TabManager,
+        tab_id: BrowserTabId,
+    }
+
+    impl RenderHandler {
+        // view_rect is in logical (CSS) pixels; the stored bounds arrive as
+        // physical pixels, so divide by the backing scale factor.
+        fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
+            let bounds = self.manager.tab_bounds(&self.tab_id);
+            if let Some(rect) = rect {
+                let scale = bounds.scale_factor.max(0.5);
+                let logical = |physical: u32| {
+                    i32::try_from(((physical as f32) / scale).round().max(1.0) as u32)
+                        .unwrap_or(i32::MAX)
+                };
+                *rect = Rect {
+                    x: 0,
+                    y: 0,
+                    width: logical(bounds.width),
+                    height: logical(bounds.height),
+                };
+            }
+        }
+
+        // Report the backing scale factor so frames render at full Retina
+        // resolution (logical viewport × scale).
+        fn screen_info(
+            &self,
+            _browser: Option<&mut Browser>,
+            screen_info: Option<&mut ScreenInfo>,
+        ) -> i32 {
+            let bounds = self.manager.tab_bounds(&self.tab_id);
+            if let Some(info) = screen_info {
+                info.device_scale_factor = bounds.scale_factor;
+            }
+            1
+        }
+
+        fn on_paint(
+            &self,
+            _browser: Option<&mut Browser>,
+            type_: PaintElementType,
+            _dirty_rects: Option<&[Rect]>,
+            buffer: *const u8,
+            width: ::std::os::raw::c_int,
+            height: ::std::os::raw::c_int,
+        ) {
+            if type_ != PaintElementType::VIEW {
+                return;
+            }
+            self.manager
+                .write_frame(&self.tab_id, buffer, width, height);
         }
     }
 }
@@ -1237,8 +1541,24 @@ fn shortcut_for_key(
 ) -> Option<CefBrowserShortcut> {
     const CONTROL_DOWN: u32 = 1 << 2;
     const ALT_DOWN: u32 = 1 << 3;
+    const COMMAND_DOWN: u32 = 1 << 7;
     if !raw_key_down {
         return None;
+    }
+    // macOS uses Cmd-based browser shortcuts (Cmd+L/T/W/R, Cmd+←/→); Windows
+    // uses Ctrl+… and Alt+←/→.
+    if cfg!(target_os = "macos") {
+        let command = modifiers & COMMAND_DOWN != 0;
+        let ctrl_or_alt = modifiers & (CONTROL_DOWN | ALT_DOWN) != 0;
+        return match (command, ctrl_or_alt, windows_key_code) {
+            (true, false, 0x4c) => Some(CefBrowserShortcut::FocusAddress),
+            (true, false, 0x54) => Some(CefBrowserShortcut::NewTab),
+            (true, false, 0x57) => Some(CefBrowserShortcut::CloseTab),
+            (true, false, 0x52) => Some(CefBrowserShortcut::Reload),
+            (true, false, 0x25) => Some(CefBrowserShortcut::Back),
+            (true, false, 0x27) => Some(CefBrowserShortcut::Forward),
+            _ => None,
+        };
     }
     let control = modifiers & CONTROL_DOWN != 0;
     let alt = modifiers & ALT_DOWN != 0;
@@ -1259,16 +1579,34 @@ mod shortcut_tests {
 
     #[test]
     fn only_fixed_browser_shortcuts_are_forwarded() {
-        assert_eq!(
-            shortcut_for_key(true, 1 << 2, 0x4c),
-            Some(CefBrowserShortcut::FocusAddress)
-        );
-        assert_eq!(
-            shortcut_for_key(true, 1 << 3, 0x25),
-            Some(CefBrowserShortcut::Back)
-        );
-        assert_eq!(shortcut_for_key(true, 0, 0x4c), None);
-        assert_eq!(shortcut_for_key(false, 1 << 2, 0x4c), None);
+        #[cfg(target_os = "macos")]
+        {
+            // Cmd-based shortcuts on macOS.
+            assert_eq!(
+                shortcut_for_key(true, 1 << 7, 0x4c),
+                Some(CefBrowserShortcut::FocusAddress)
+            );
+            assert_eq!(
+                shortcut_for_key(true, 1 << 7, 0x25),
+                Some(CefBrowserShortcut::Back)
+            );
+            assert_eq!(shortcut_for_key(true, 1 << 2, 0x4c), None);
+            assert_eq!(shortcut_for_key(true, 0, 0x4c), None);
+            assert_eq!(shortcut_for_key(false, 1 << 7, 0x4c), None);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!(
+                shortcut_for_key(true, 1 << 2, 0x4c),
+                Some(CefBrowserShortcut::FocusAddress)
+            );
+            assert_eq!(
+                shortcut_for_key(true, 1 << 3, 0x25),
+                Some(CefBrowserShortcut::Back)
+            );
+            assert_eq!(shortcut_for_key(true, 0, 0x4c), None);
+            assert_eq!(shortcut_for_key(false, 1 << 2, 0x4c), None);
+        }
     }
 
     #[test]
@@ -1473,7 +1811,7 @@ fn valid_parent_window(parent: usize) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn reparent_window(window: *mut sys::HWND__, parent: usize) {
+fn reparent_window(window: NativeWindowHandle, parent: usize) {
     use windows_sys::Win32::UI::WindowsAndMessaging::SetParent;
     unsafe {
         SetParent(window.cast(), parent as *mut std::ffi::c_void);
@@ -1481,7 +1819,7 @@ fn reparent_window(window: *mut sys::HWND__, parent: usize) {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn reparent_window(_window: *mut sys::HWND__, _parent: usize) {}
+fn reparent_window(_window: NativeWindowHandle, _parent: usize) {}
 
 fn tab_missing(tab_id: &BrowserTabId) -> CefHostFailure {
     CefHostFailure::new(
@@ -1500,7 +1838,7 @@ fn runtime_missing(tab_id: &BrowserTabId) -> CefHostFailure {
 }
 
 #[cfg(target_os = "windows")]
-fn move_window(window: *mut sys::HWND__, bounds: CefBounds) {
+fn move_window(window: NativeWindowHandle, bounds: CefBounds) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SWP_NOACTIVATE, SWP_NOOWNERZORDER, SetWindowPos,
     };
@@ -1521,10 +1859,10 @@ fn move_window(window: *mut sys::HWND__, bounds: CefBounds) {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn move_window(_window: sys::cef_window_handle_t, _bounds: CefBounds) {}
+fn move_window(_window: NativeWindowHandle, _bounds: CefBounds) {}
 
 #[cfg(target_os = "windows")]
-fn show_window(window: *mut sys::HWND__, visible: bool) {
+fn show_window(window: NativeWindowHandle, visible: bool) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNA, ShowWindow};
     unsafe {
         ShowWindow(window.cast(), if visible { SW_SHOWNA } else { SW_HIDE });
@@ -1532,7 +1870,7 @@ fn show_window(window: *mut sys::HWND__, visible: bool) {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn show_window(_window: sys::cef_window_handle_t, _visible: bool) {}
+fn show_window(_window: NativeWindowHandle, _visible: bool) {}
 
 #[cfg(test)]
 mod tests {

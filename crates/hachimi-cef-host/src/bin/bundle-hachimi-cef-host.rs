@@ -36,7 +36,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
     let executable = cef::build_util::linux::bundle(&output, &target_profile, "hachimi-cef-host")?;
     #[cfg(target_os = "macos")]
-    let executable = cef::build_util::mac::bundle(&output, &target_profile, "hachimi-cef-host")?;
+    let executable = {
+        let bundle_info = cef::build_util::mac::BundleInfo::new(
+            "Hachimi CEF Host",
+            "com.hachimi.cef-host",
+            "Hachimi CEF Host",
+            "en",
+            semver::Version::new(1, 0, 0),
+        );
+        let app = cef::build_util::mac::bundle(
+            &output,
+            &target_profile,
+            "hachimi-cef-host",
+            "hachimi-cef-host",
+            None,
+            bundle_info,
+        )?;
+        app.join("Contents").join("MacOS").join("hachimi-cef-host")
+    };
     write_runtime_manifest(&output)?;
     println!("{}", executable.display());
     Ok(())
@@ -55,15 +72,37 @@ fn write_runtime_manifest(root: &Path) -> Result<(), Box<dyn std::error::Error>>
         "cefCrateVersion": "151.2.0+151.3.14",
         "cefVersion": "151.3.14+g5d67476",
         "chromiumVersion": "151.0.7922.72",
-        "platform": "windows-x64",
-        "archiveName": "cef_binary_151.3.14+g5d67476+chromium-151.0.7922.72_windows64_minimal.tar.bz2",
-        "archiveUrl": "https://cef-builds.spotifycdn.com/cef_binary_151.3.14%2Bg5d67476%2Bchromium-151.0.7922.72_windows64_minimal.tar.bz2",
-        "archiveSha1": "96abc7e46d7dfe31756be682e1c0d423807b498e",
-        "archiveSha256": "c63a18909fea077b5c3b5f9a3194f05781cd909efa8a6d7a543cad99c4183a55",
+        "platform": platform::PLATFORM,
+        "archiveName": platform::ARCHIVE_NAME,
+        "archiveUrl": platform::ARCHIVE_URL,
+        "archiveSha1": platform::ARCHIVE_SHA1,
+        "archiveSha256": platform::ARCHIVE_SHA256,
         "files": files,
     });
     std::fs::write(manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
     Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+mod platform {
+    pub const PLATFORM: &str = "windows-x64";
+    pub const ARCHIVE_NAME: &str =
+        "cef_binary_151.3.14+g5d67476+chromium-151.0.7922.72_windows64_minimal.tar.bz2";
+    pub const ARCHIVE_URL: &str = "https://cef-builds.spotifycdn.com/cef_binary_151.3.14%2Bg5d67476%2Bchromium-151.0.7922.72_windows64_minimal.tar.bz2";
+    pub const ARCHIVE_SHA1: &str = "96abc7e46d7dfe31756be682e1c0d423807b498e";
+    pub const ARCHIVE_SHA256: &str =
+        "c63a18909fea077b5c3b5f9a3194f05781cd909efa8a6d7a543cad99c4183a55";
+}
+
+#[cfg(target_os = "macos")]
+mod platform {
+    pub const PLATFORM: &str = "macos-arm64";
+    pub const ARCHIVE_NAME: &str =
+        "cef_binary_151.3.14+g5d67476+chromium-151.0.7922.72_macosarm64_minimal.tar.bz2";
+    pub const ARCHIVE_URL: &str = "https://cef-builds.spotifycdn.com/cef_binary_151.3.14%2Bg5d67476%2Bchromium-151.0.7922.72_macosarm64_minimal.tar.bz2";
+    pub const ARCHIVE_SHA1: &str = "41c8a20b68d36b795d16287d9f75ca8ff9dc1363";
+    pub const ARCHIVE_SHA256: &str =
+        "e3d268c88c612548f679aa454457e415d41c796bc5996f592b8263749c9681fd";
 }
 
 fn collect_files(

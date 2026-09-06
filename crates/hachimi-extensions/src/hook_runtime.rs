@@ -291,6 +291,7 @@ async fn execute_hook_sidecar(
                 timeout: HOOK_TIMEOUT,
                 output_limit: HOOK_OUTPUT_LIMIT,
                 network_policy: SandboxNetworkPolicy::DenyAll,
+                git_metadata_writable: false,
             },
             cancellation,
         )

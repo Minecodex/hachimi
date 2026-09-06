@@ -6,6 +6,8 @@ mod process_backend;
 mod restricted_process;
 mod runtime_attestation;
 mod runtime_manager;
+#[cfg(any(target_os = "macos", test))]
+mod seatbelt;
 mod setup;
 
 pub use appcontainer::APP_CONTAINER_NAME;
@@ -18,15 +20,22 @@ pub use process_backend::{
     SandboxedOutput,
 };
 pub use restricted_process::{RestrictedProcessError, run_restricted_process};
+#[cfg(target_os = "macos")]
+pub use runtime_attestation::MACOS_SANDBOX_POLICY_VERSION;
 pub use runtime_attestation::{
-    SANDBOX_POLICY_VERSION, attest_windows_runtime, attest_workspace_boundaries,
+    SANDBOX_POLICY_VERSION, attest_windows_runtime, attest_workspace_boundaries, backend_dir_key,
+    current_policy_version,
 };
 pub use runtime_manager::{SandboxManagerError, SandboxRuntimeManager};
+#[cfg(target_os = "macos")]
+pub use seatbelt::seatbelt_terminal_args;
+#[cfg(target_os = "macos")]
+pub use setup::install_macos_marker;
 pub use setup::{
     GitMutationAcl, SandboxSetupMarker, deny_restricted_code_read, deny_restricted_code_write,
     grant_restricted_code_access, install_sandbox_marker, prepare_git_mutation_acl,
     prepare_workspace_acl, restore_git_mutation_acl, revoke_restricted_code_access,
-    set_trusted_git_executable, trusted_git_executable, uninstall_sandbox,
+    uninstall_sandbox,
 };
 
 use std::path::Path;
@@ -176,6 +185,254 @@ impl SandboxBackend for WindowsSandboxReadinessProbe {
         process_backend::spawn_with_launcher(runtime.launcher.clone(), spec, cancellation)
     }
 }
+
+/// macOS Seatbelt probe: mirrors the Windows probe's API shape so call sites
+/// stay platform-agnostic. Seatbelt needs no AppContainer profile or launcher;
+/// the `launcher` slot of `with_runtime` is accepted and ignored on macOS.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone)]
+pub struct MacOSSeatbeltReadinessProbe {
+    setup_marker: std::path::PathBuf,
+    runtime: Option<RuntimeProbePaths>,
+}
+
+#[cfg(target_os = "macos")]
+impl MacOSSeatbeltReadinessProbe {
+    #[must_use]
+    pub fn new(setup_marker: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            setup_marker: setup_marker.into(),
+            runtime: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_runtime(
+        mut self,
+        launcher: impl Into<std::path::PathBuf>,
+        canary: impl Into<std::path::PathBuf>,
+        attestation_root: impl Into<std::path::PathBuf>,
+    ) -> Self {
+        let _ = launcher.into();
+        self.runtime = Some(RuntimeProbePaths {
+            launcher: std::path::PathBuf::new(),
+            canary: canary.into(),
+            attestation_root: attestation_root.into(),
+            expected_integrity: Vec::new(),
+        });
+        self
+    }
+
+    #[must_use]
+    pub fn with_runtime_integrity(
+        mut self,
+        expected_integrity: Vec<(std::path::PathBuf, String)>,
+    ) -> Self {
+        if let Some(runtime) = &mut self.runtime {
+            runtime.expected_integrity = expected_integrity;
+        }
+        self
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl SandboxBackend for MacOSSeatbeltReadinessProbe {
+    fn capability_report(&self) -> SandboxCapabilityReport {
+        self.runtime.as_ref().map_or_else(
+            || probe_macos_readiness(&self.setup_marker),
+            |runtime| {
+                runtime_attestation::attest_macos_runtime(
+                    &self.setup_marker,
+                    &runtime.canary,
+                    &runtime.attestation_root,
+                    &runtime.expected_integrity,
+                )
+            },
+        )
+    }
+
+    fn spawn_restricted(
+        &self,
+        spec: SandboxLaunchSpec,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> SandboxSpawnFuture<'_> {
+        let report = self.capability_report();
+        if SandboxStatus::from_report(&report) != SandboxStatus::Enforced {
+            return Box::pin(async move {
+                Err(SandboxError::NotEnforced(
+                    report
+                        .stable_error_code
+                        .unwrap_or_else(|| "sandbox_not_enforced".into()),
+                ))
+            });
+        }
+        process_backend::spawn_with_seatbelt(spec, cancellation)
+    }
+}
+
+/// Marker-only readiness for macOS: mirrors probe_windows_readiness semantics.
+#[cfg(target_os = "macos")]
+#[must_use]
+pub fn probe_macos_readiness(setup_marker: &Path) -> SandboxCapabilityReport {
+    if !Path::new(crate::seatbelt::SEATBELT_EXECUTABLE).is_file() {
+        return report(
+            SandboxReadiness::Unavailable,
+            Some("seatbelt_missing"),
+            vec!["/usr/bin/sandbox-exec is unavailable".into()],
+        );
+    }
+    let bytes = match std::fs::read(setup_marker) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return report(
+                SandboxReadiness::SetupRequired,
+                Some("setup_marker_missing"),
+                vec!["macOS Seatbelt setup has not completed".into()],
+            );
+        }
+        Err(_) => {
+            return report(
+                SandboxReadiness::Degraded,
+                Some("setup_marker_unreadable"),
+                vec!["macOS Seatbelt setup marker could not be read".into()],
+            );
+        }
+    };
+    let marker = match serde_json::from_slice::<SetupMarker>(&bytes) {
+        Ok(marker) => marker,
+        Err(_) => {
+            return report(
+                SandboxReadiness::Degraded,
+                Some("setup_marker_invalid"),
+                vec!["macOS Seatbelt setup marker is invalid".into()],
+            );
+        }
+    };
+    SandboxCapabilityReport {
+        backend: "macos_seatbelt_v1".into(),
+        readiness: SandboxReadiness::Degraded,
+        os_enforced: false,
+        filesystem_enforced: false,
+        process_enforced: false,
+        network_enforced: false,
+        version: Some(marker.version),
+        stable_error_code: Some("runtime_attestation_missing".into()),
+        diagnostics: vec![
+            "setup components are present; runtime attestation is still required before execution"
+                .into(),
+        ],
+    }
+}
+
+/// Platform-dispatching probe used by every call site. On Windows it wraps the
+/// AppContainer probe; on macOS the Seatbelt probe; elsewhere it stays
+/// permanently unavailable.
+#[derive(Debug, Clone)]
+pub struct PlatformSandboxProbe {
+    #[cfg(windows)]
+    inner: WindowsSandboxReadinessProbe,
+    #[cfg(target_os = "macos")]
+    inner: MacOSSeatbeltReadinessProbe,
+    #[cfg(not(any(windows, target_os = "macos")))]
+    inner: UnsupportedPlatform,
+}
+
+/// Constructs the sandbox readiness probe for the host platform.
+#[must_use]
+pub fn platform_probe(setup_marker: impl Into<std::path::PathBuf>) -> PlatformSandboxProbe {
+    #[cfg(windows)]
+    {
+        PlatformSandboxProbe {
+            inner: WindowsSandboxReadinessProbe::new(setup_marker),
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        PlatformSandboxProbe {
+            inner: MacOSSeatbeltReadinessProbe::new(setup_marker),
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = setup_marker.into();
+        PlatformSandboxProbe {
+            inner: UnsupportedPlatform,
+        }
+    }
+}
+
+impl PlatformSandboxProbe {
+    #[must_use]
+    pub fn with_runtime(
+        self,
+        launcher: impl Into<std::path::PathBuf>,
+        canary: impl Into<std::path::PathBuf>,
+        attestation_root: impl Into<std::path::PathBuf>,
+    ) -> Self {
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            Self {
+                inner: self.inner.with_runtime(launcher, canary, attestation_root),
+            }
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            let _ = (launcher.into(), canary.into(), attestation_root.into());
+            self
+        }
+    }
+
+    #[must_use]
+    pub fn with_runtime_integrity(
+        self,
+        expected_integrity: Vec<(std::path::PathBuf, String)>,
+    ) -> Self {
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            Self {
+                inner: self.inner.with_runtime_integrity(expected_integrity),
+            }
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            let _ = expected_integrity;
+            self
+        }
+    }
+}
+
+impl SandboxBackend for PlatformSandboxProbe {
+    fn capability_report(&self) -> SandboxCapabilityReport {
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            self.inner.capability_report()
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            unavailable_report()
+        }
+    }
+
+    fn spawn_restricted(
+        &self,
+        spec: SandboxLaunchSpec,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> SandboxSpawnFuture<'_> {
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            self.inner.spawn_restricted(spec, cancellation)
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            let _ = (spec, cancellation);
+            Box::pin(async { Err(SandboxError::RuntimeUnavailable) })
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+#[derive(Debug, Clone)]
+struct UnsupportedPlatform;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -32,6 +32,7 @@ import {
 } from "./browser-site-policy-settings";
 import { ComputerUseSettings } from "./computer-use-settings";
 import { RuntimeHealthBanner } from "./runtime-health";
+import { SystemToolsSettings } from "./system-tools-settings";
 
 type BusyAction = "load" | "sandbox" | "pairing";
 
@@ -243,6 +244,7 @@ export function HostDomainSettingsPage(props: {
 
       <Show when={props.section === "runtime-security"}>
         <>
+          <SystemToolsSettings />
           <SettingsSection title={zh() ? "普通用户沙箱" : "Per-user sandbox"}>
             <RuntimeHealthBanner component="internal_resources" zh={zh()} />
             <StatusBanner tone="neutral">

@@ -366,6 +366,7 @@ pub(super) async fn update_browser_surface_layout(
         y: scale_i32(request.bounds.y, scale)?,
         width: scale_u32(request.bounds.width, scale)?,
         height: scale_u32(request.bounds.height, scale)?,
+        scale_factor: scale as f32,
     };
     state
         .embedded_browser

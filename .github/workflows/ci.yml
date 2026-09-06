@@ -45,6 +45,9 @@ jobs:
       - run: pnpm format:check:rust
       - run: pnpm lint:clippy
       - run: pnpm test:rust
+      - name: Verify Windows system Git discovery as a standard user
+        shell: powershell
+        run: ./scripts/ci/run-system-runtime-standard-user.ps1
       - run: pnpm contracts:check
       - run: pnpm test:p0-adversarial
       - run: pnpm release:check-clean
@@ -106,3 +109,53 @@ jobs:
           if ($results -contains 'failure' -or $results -contains 'cancelled' -or $results -contains 'skipped') {
             throw "Parallel Windows CI failed: $($results -join ', ')"
           }
+
+  # Minimal macOS (arm64) regression net: native build chain, Rust gates, and
+  # the CEF host smoke. Prettier/ESLint/typecheck stay on the Windows job
+  # (platform-independent).
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.10.0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.15.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:prepare
+      - run: pnpm format:check:rust
+      - run: pnpm lint:clippy
+      - run: pnpm test:rust
+      - run: pnpm test:cef:mac
+      - name: Build macOS app system-runtime smoke bundle
+        run: corepack pnpm exec tauri build --debug --bundles app --features desktop-e2e --config apps/desktop/src-tauri/tauri.conf.json
+      - name: Launch the app bundle with a Finder-equivalent minimal environment
+        run: |
+          env -i \
+            HOME="$HOME" \
+            USER="$USER" \
+            LOGNAME="$LOGNAME" \
+            TMPDIR="$RUNNER_TEMP/" \
+            LANG="en_US.UTF-8" \
+            PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+            target/debug/bundle/macos/Hachimi.app/Contents/MacOS/hachimi-desktop \
+            --system-runtime-smoke
+      - name: Launch the app bundle through the Apple Git toolchain
+        run: |
+          env -i \
+            HOME="$HOME" \
+            USER="$USER" \
+            LOGNAME="$LOGNAME" \
+            TMPDIR="$RUNNER_TEMP/" \
+            LANG="en_US.UTF-8" \
+            PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+            HACHIMI_GIT_EXECUTABLE="/usr/bin/git" \
+            target/debug/bundle/macos/Hachimi.app/Contents/MacOS/hachimi-desktop \
+            --system-runtime-smoke

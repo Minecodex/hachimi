@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -13,6 +14,9 @@ struct HostOptions {
     parent_hwnd: usize,
     profile_dir: PathBuf,
     log_file: PathBuf,
+    /// Prototype OSR mode (macOS P4-A): browsers render windowless and frames
+    /// are written to `<profile>/frames/` for the desktop to composite.
+    osr: bool,
 }
 
 impl HostOptions {
@@ -24,7 +28,7 @@ impl HostOptions {
             .ok_or_else(|| "cef_parent_window_missing".to_owned())?
             .parse::<usize>()
             .map_err(|_| "cef_parent_window_invalid".to_owned())?;
-        if parent_hwnd == 0 {
+        if parent_hwnd == 0 && !std::env::args().any(|arg| arg == "--hachimi-osr") {
             return Err("cef_parent_window_invalid".into());
         }
         let profile_dir = value("--hachimi-profile-dir=")
@@ -37,6 +41,7 @@ impl HostOptions {
             parent_hwnd,
             profile_dir,
             log_file,
+            osr: std::env::args().any(|arg| arg == "--hachimi-osr"),
         })
     }
 }
@@ -100,13 +105,21 @@ pub fn run_cef_host(
     crate::bootstrap_trace::record("cef_host_options_ready");
     std::fs::create_dir_all(&options.profile_dir).map_err(|error| error.to_string())?;
     let sink = EventSink::default();
-    let manager = TabManager::new(options.parent_hwnd, sink.clone());
+    let manager = TabManager::new_with_osr(
+        options.parent_hwnd,
+        sink.clone(),
+        options.osr,
+        Some(options.profile_dir.join("frames")),
+    );
     let mut app = HachimiCefApp::new(manager.clone(), sink.clone());
     let profile_dir = CefString::from(options.profile_dir.to_string_lossy().as_ref());
     let log_file = CefString::from(options.log_file.to_string_lossy().as_ref());
     let settings = Settings {
         no_sandbox: (!cfg!(feature = "sandbox")).into(),
-        multi_threaded_message_loop: 1,
+        // CEF on macOS does not support a multi-threaded message loop; the
+        // browser process runs the message loop on the main thread.
+        multi_threaded_message_loop: (!cfg!(target_os = "macos")).into(),
+        windowless_rendering_enabled: options.osr.into(),
         cache_path: profile_dir.clone(),
         root_cache_path: profile_dir,
         persist_session_cookies: 1,
@@ -127,7 +140,33 @@ pub fn run_cef_host(
     }
     crate::bootstrap_trace::record("cef_initialize_completed");
 
-    let shutdown_requested = run_command_loop(manager.clone(), &sink);
+    #[cfg(target_os = "macos")]
+    let shutdown_requested = {
+        // CEF on macOS does not support a multi-threaded message loop, and
+        // quit_message_loop does not reliably stop run_message_loop without
+        // an NSApplication, so the main thread pumps the message loop
+        // manually while stdin commands arrive on a background thread.
+        let loop_manager = manager.clone();
+        let loop_sink = sink.clone();
+        let quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let command_quit = quit.clone();
+        let command_thread =
+            thread::spawn(move || run_command_loop(loop_manager, &loop_sink, command_quit));
+        while !quit.load(std::sync::atomic::Ordering::Acquire) {
+            do_message_loop_work();
+            thread::sleep(Duration::from_millis(8));
+        }
+        crate::bootstrap_trace::record("cef_message_loop_returned");
+        let result = command_thread.join().unwrap_or(false);
+        crate::bootstrap_trace::record("cef_command_thread_joined");
+        result
+    };
+    #[cfg(not(target_os = "macos"))]
+    let shutdown_requested = run_command_loop(
+        manager.clone(),
+        &sink,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
     crate::bootstrap_trace::record("cef_command_loop_completed");
     if !shutdown_requested {
         manager.close_all();
@@ -138,6 +177,8 @@ pub fn run_cef_host(
         }
         thread::sleep(Duration::from_millis(10));
     }
+    crate::bootstrap_trace::record("cef_shutdown_begin");
     shutdown();
+    crate::bootstrap_trace::record("cef_shutdown_completed");
     Ok(())
 }

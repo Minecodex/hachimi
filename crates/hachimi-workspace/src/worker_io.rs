@@ -195,6 +195,7 @@ pub(super) fn bounded_bytes(bytes: &[u8]) -> (String, bool) {
 }
 
 pub(super) fn copy_process_environment(command: &mut Command) {
+    #[cfg(windows)]
     const ALLOWED: &[&str] = &[
         "PATH",
         "PATHEXT",
@@ -205,6 +206,20 @@ pub(super) fn copy_process_environment(command: &mut Command) {
         "USERPROFILE",
         "LOCALAPPDATA",
         "APPDATA",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "SSH_AUTH_SOCK",
+    ];
+    #[cfg(not(windows))]
+    const ALLOWED: &[&str] = &[
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "LC_ALL",
+        "TERM",
         "CARGO_HOME",
         "RUSTUP_HOME",
         "SSH_AUTH_SOCK",

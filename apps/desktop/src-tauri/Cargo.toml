@@ -41,6 +41,7 @@ hachimi-process.workspace = true
 hachimi-process-policy.workspace = true
 hachimi-protocol.workspace = true
 hachimi-storage.workspace = true
+hachimi-system-runtime.workspace = true
 hachimi-user-input.workspace = true
 hachimi-sandbox.workspace = true
 hachimi-scheduler.workspace = true
@@ -75,5 +76,18 @@ windows = { workspace = true, features = [
   "Win32_Security_Credentials",
 ] }
 
+# macOS CEF OSR desktop composite (cef_overlay) — also used by the
+# cef_osr_probe example.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit = { workspace = true, features = ["NSView", "NSImage", "NSImageView", "NSBitmapImageRep", "NSEvent", "NSWindow", "NSRunningApplication"] }
+objc2-core-graphics.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
+tao.workspace = true
+wry.workspace = true
+core-foundation.workspace = true
+core-graphics.workspace = true
+raw-window-handle.workspace = true

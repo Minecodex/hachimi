@@ -255,7 +255,13 @@ describe("TerminalPanel", () => {
     const onClose = vi.fn();
     const port = {
       listProcesses: vi.fn(async () => []),
-      getDefaultShell: vi.fn(async () => ["powershell.exe"]),
+      getDefaultShell: vi.fn(async () => ({
+        executablePath: "powershell.exe",
+        kind: "power_shell" as const,
+        interactiveArgs: ["-NoLogo"],
+        commandArgs: ["-NoLogo", "-NoProfile", "-Command"],
+        runtimeRevision: 1,
+      })),
       spawnProcess: vi
         .fn()
         .mockResolvedValueOnce(process("multi", 1))
@@ -341,7 +347,13 @@ describe("TerminalPanel", () => {
     });
     const port = {
       listProcesses: vi.fn(async () => []),
-      getDefaultShell: vi.fn(async () => ["powershell.exe"]),
+      getDefaultShell: vi.fn(async () => ({
+        executablePath: "powershell.exe",
+        kind: "power_shell" as const,
+        interactiveArgs: ["-NoLogo"],
+        commandArgs: ["-NoLogo", "-NoProfile", "-Command"],
+        runtimeRevision: 1,
+      })),
       spawnProcess: vi.fn(() => launch),
       readProcess: vi.fn(async () => ({
         process: process("shared"),

@@ -310,7 +310,7 @@ fn require_mutating_sandbox(status: hachimi_sandbox::SandboxStatus) -> Result<()
     } else {
         Err(CommandError::new(
             "sandbox_not_enforced",
-            "file saving is disabled until Windows sandbox attestation succeeds",
+            "file saving is disabled until OS sandbox attestation succeeds",
         ))
     }
 }
@@ -334,14 +334,16 @@ fn restricted_workspace_client(
     state: &DesktopState,
     workspace: &ResolvedWorkspace,
     grant_source: &str,
+    git: Option<hachimi_system_runtime::GitRuntimeLease>,
 ) -> Result<WorkspaceHostClient, CommandError> {
     require_mutating_sandbox(state.sandbox_status())?;
     let worker_program = workspace_worker_path();
-    let mut client = WorkspaceHostClient::new(
+    let mut client = WorkspaceHostClient::new_with_git_runtime(
         &worker_program,
         &workspace.checkout.path,
         workspace.checkout.id.as_str(),
         workspace.run.generation,
+        git.clone(),
     );
     if deterministic_test_sandbox(state) {
         return Ok(client);
@@ -356,6 +358,8 @@ fn restricted_workspace_client(
         Path::new(&workspace.checkout.path),
         client.run_temp_dir(),
         &worker_program,
+        git.as_ref()
+            .map(hachimi_system_runtime::GitRuntimeLease::executable),
     )
     .map_err(|error| CommandError::operation("sandbox_acl_prepare_failed", error))?;
     hachimi_sandbox::attest_workspace_boundaries(
@@ -373,6 +377,7 @@ fn restricted_workspace_client(
             session_id: workspace.session_id.clone(),
             run_id: workspace.run.id.clone(),
             grants: interactive_grants(workspace, grant_source),
+            git_metadata_writable: false,
         },
         Arc::new(InteractiveWorkspaceLaunchGuard {
             store: state.agent_store.clone(),
@@ -393,14 +398,17 @@ fn safe_to_abandon_claim(code: WorkspaceErrorCode) -> bool {
             | WorkspaceErrorCode::TooLarge
             | WorkspaceErrorCode::Conflict
             | WorkspaceErrorCode::ProcessFailed
+            | WorkspaceErrorCode::SystemGitChanged
     )
 }
 
 fn workspace_command_error(error: WorkspaceError) -> CommandError {
-    CommandError::new(
-        format!("workspace_{:?}", error.code).to_lowercase(),
-        error.message,
-    )
+    let code = if error.code == WorkspaceErrorCode::SystemGitChanged {
+        "system_git_changed".to_owned()
+    } else {
+        format!("workspace_{:?}", error.code).to_lowercase()
+    };
+    CommandError::new(code, error.message)
 }
 
 #[tauri::command]
@@ -425,7 +433,11 @@ pub(super) async fn write_workspace_file(
         "workspace_write_precondition_failed",
         "the selected Run or generation changed before the save",
     )?;
-    let host = restricted_workspace_client(&state, &workspace, "interactive_editor")?;
+    let git = state
+        .system_runtime
+        .require_git(hachimi_protocol::SystemToolCapability::GitInspect)
+        .ok();
+    let host = restricted_workspace_client(&state, &workspace, "interactive_editor", git)?;
     let fingerprint = mutation_fingerprint(&request);
     let now = i64::try_from(epoch_millis()).unwrap_or(i64::MAX);
     match state
@@ -560,6 +572,7 @@ fn safe_to_abandon_git_claim(code: WorkspaceErrorCode) -> bool {
             | WorkspaceErrorCode::NotText
             | WorkspaceErrorCode::TooLarge
             | WorkspaceErrorCode::Conflict
+            | WorkspaceErrorCode::SystemGitChanged
     )
 }
 
@@ -585,7 +598,12 @@ pub(super) async fn mutate_workspace_git(
         "workspace_git_precondition_failed",
         "the selected Run or generation changed before the Git mutation",
     )?;
-    let host = restricted_workspace_client(&state, &workspace, "interactive_git")?;
+    let git = state
+        .system_runtime
+        .require_git(hachimi_protocol::SystemToolCapability::GitLocalMutation)
+        .map_err(|error| CommandError::new(error.code, error.message))?;
+    let mut host =
+        restricted_workspace_client(&state, &workspace, "interactive_git", Some(git.clone()))?;
     let fingerprint = git_mutation_fingerprint(&request)?;
     let now = i64::try_from(epoch_millis()).unwrap_or(i64::MAX);
     match state
@@ -612,7 +630,10 @@ pub(super) async fn mutate_workspace_git(
     let git_acl = if deterministic_test_sandbox(&state) {
         None
     } else {
-        match hachimi_sandbox::prepare_git_mutation_acl(Path::new(&workspace.checkout.path)) {
+        match hachimi_sandbox::prepare_git_mutation_acl(
+            Path::new(&workspace.checkout.path),
+            git.executable(),
+        ) {
             Ok(acl) => Some(acl),
             Err(error) => {
                 let _ = state
@@ -630,6 +651,11 @@ pub(super) async fn mutate_workspace_git(
             }
         }
     };
+    // The Seatbelt/AppContainer boundary keeps `.git` read-only by default;
+    // while the verified mutation lease is held, this launch may write it.
+    if git_acl.is_some() {
+        host = host.with_git_metadata_writable(true);
+    }
     let output = host
         .execute(
             git_operation(request.mutation),
@@ -738,6 +764,7 @@ mod tests {
     fn uncertain_worker_failures_keep_the_claim() {
         assert!(safe_to_abandon_claim(WorkspaceErrorCode::Conflict));
         assert!(safe_to_abandon_claim(WorkspaceErrorCode::StaleGeneration));
+        assert!(safe_to_abandon_claim(WorkspaceErrorCode::SystemGitChanged));
         assert!(!safe_to_abandon_claim(WorkspaceErrorCode::TimedOut));
         assert!(!safe_to_abandon_claim(WorkspaceErrorCode::HostDisconnected));
         assert!(!safe_to_abandon_claim(WorkspaceErrorCode::Io));
@@ -805,6 +832,17 @@ mod tests {
         assert!(safe_to_abandon_git_claim(
             WorkspaceErrorCode::StaleGeneration
         ));
+        assert!(safe_to_abandon_git_claim(
+            WorkspaceErrorCode::SystemGitChanged
+        ));
+        assert_eq!(
+            workspace_command_error(WorkspaceError::new(
+                WorkspaceErrorCode::SystemGitChanged,
+                "Git drifted",
+            ))
+            .code,
+            "system_git_changed"
+        );
         assert!(!safe_to_abandon_git_claim(
             WorkspaceErrorCode::ProcessFailed
         ));

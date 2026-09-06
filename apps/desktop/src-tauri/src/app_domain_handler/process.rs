@@ -44,7 +44,7 @@ fn validate_process_sandbox(
     if status != SandboxStatus::Enforced && restricted_backend {
         return Err(AppServerDomainError::new(
             "sandbox_not_enforced",
-            "process execution is disabled until Windows sandbox attestation succeeds",
+            "process execution is disabled until OS sandbox attestation succeeds",
         ));
     }
     Ok(())

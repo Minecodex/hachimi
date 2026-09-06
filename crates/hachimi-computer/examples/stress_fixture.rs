@@ -1,8 +1,8 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn main() {
-    eprintln!("hachimi-computer stress fixture requires Windows");
+    eprintln!("hachimi-computer stress fixture requires Windows or macOS");
 }
 
 #[cfg(windows)]
@@ -144,7 +144,57 @@ mod windows_fixture {
     }
 }
 
+#[cfg(target_os = "macos")]
+mod macos_fixture {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{
+        NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSTextField, NSWindow,
+        NSWindowStyleMask,
+    };
+    use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+
+    /// A titled window with a focusable text field: enough surface for the
+    /// desktop-stress harness to drive capture, typing, move and resize.
+    pub fn run() {
+        let main = MainThreadMarker::new().expect("the fixture runs on the main thread");
+        let app = NSApplication::sharedApplication(main);
+        app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+        let window = unsafe {
+            NSWindow::initWithContentRect_styleMask_backing_defer(
+                main.alloc(),
+                NSRect::new(NSPoint::new(200.0, 200.0), NSSize::new(640.0, 240.0)),
+                NSWindowStyleMask::Titled
+                    | NSWindowStyleMask::Closable
+                    | NSWindowStyleMask::Miniaturizable
+                    | NSWindowStyleMask::Resizable,
+                NSBackingStoreType::Buffered,
+                false,
+            )
+        };
+        window.setTitle(&NSString::from_str("Hachimi Computer fixture"));
+        let field = NSTextField::initWithFrame(
+            main.alloc(),
+            NSRect::new(NSPoint::new(12.0, 12.0), NSSize::new(616.0, 32.0)),
+        );
+        field.setStringValue(&NSString::from_str("Hachimi Computer fixture ready"));
+        window
+            .contentView()
+            .expect("content view")
+            .addSubview(&field);
+        window.center();
+        window.makeKeyAndOrderFront(None);
+        app.activate();
+        app.finishLaunching();
+        app.run();
+    }
+}
+
 #[cfg(windows)]
 fn main() {
     windows_fixture::run();
+}
+
+#[cfg(target_os = "macos")]
+fn main() {
+    macos_fixture::run();
 }

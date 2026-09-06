@@ -16,6 +16,8 @@ mod browser_router;
 mod browser_settings_commands;
 mod browser_tool_policy;
 mod browser_workspace_commands;
+#[cfg(target_os = "macos")]
+mod cef_overlay;
 mod channel_agent_dispatch;
 mod command_error;
 mod computer_settings_commands;
@@ -58,6 +60,9 @@ mod skill_drop;
 mod startup_error;
 mod startup_timeline;
 mod storage_layout;
+mod system_runtime_commands;
+#[cfg(all(debug_assertions, feature = "desktop-e2e"))]
+mod system_runtime_smoke;
 mod workbench_commands;
 mod workbench_plan_commands;
 mod workspace_commands;
@@ -100,6 +105,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use storage_layout::*;
+use system_runtime_commands::*;
 use workbench_commands::*;
 use workbench_plan_commands::*;
 use workspace_commands::*;
@@ -136,9 +142,7 @@ use hachimi_protocol::{
     VoiceSettingsInput, WindowPlacementV1, WorkbenchPlanAcceptanceSnapshot, WorkbenchRoute,
     WorkbenchSessionSnapshot, WorkbenchTaskSnapshot, WorkbenchTaskStartRequest,
 };
-use hachimi_sandbox::{
-    SandboxBackend, SandboxRuntimeManager, SandboxStatus, WindowsSandboxReadinessProbe,
-};
+use hachimi_sandbox::{SandboxBackend, SandboxRuntimeManager, SandboxStatus, platform_probe};
 use hachimi_storage::{AgentStore, SettingsStore};
 use hachimi_user_input::{PersistentUserInputBroker, UserInputBroker};
 use hachimi_voice::{
@@ -335,6 +339,7 @@ struct DesktopState {
     process_event_bridges: ProcessEventBridgeRegistry,
     scheduler_handle: Mutex<Option<hachimi_scheduler::SchedulerHandle>>,
     runtime_supervisor: RuntimeSupervisor,
+    system_runtime: hachimi_system_runtime::SystemRuntimeManager,
     workspace_watches: Arc<Mutex<BTreeMap<hachimi_protocol::FsWatchId, ActiveWorkspaceWatch>>>,
     workspace_searches: Arc<Mutex<BTreeMap<hachimi_protocol::FsSearchId, ActiveWorkspaceSearch>>>,
     agent_event_streams: Mutex<BTreeMap<hachimi_protocol::EventSubscriptionId, CancellationToken>>,
@@ -813,6 +818,10 @@ fn keyring_io_error(error: keyring::Error) -> std::io::Error {
 }
 
 fn main() {
+    #[cfg(all(debug_assertions, feature = "desktop-e2e"))]
+    if system_runtime_smoke::run_if_requested() {
+        return;
+    }
     if let Err(error) = reject_release_e2e_environment() {
         panic!("{error}");
     }
@@ -1056,6 +1065,8 @@ fn main() {
             read_workspace_diff_file,
             spawn_process,
             get_default_shell,
+            get_system_runtime,
+            refresh_system_runtime,
             write_process_stdin,
             resize_process,
             terminate_process,
@@ -1236,6 +1247,10 @@ fn main() {
             ))?;
             tauri::async_runtime::block_on(agent_store.reconcile_managed_workspaces())?;
             let runtime_supervisor = RuntimeSupervisor::new(app.handle().clone());
+            let system_runtime = hachimi_system_runtime::system_runtime_manager();
+            let system_runtime_snapshot =
+                tauri::async_runtime::block_on(system_runtime.refresh());
+            publish_system_runtime_health(&runtime_supervisor, &system_runtime_snapshot);
             let run_activity = agent_store.subscribe_run_activity();
             let mut recovery = tauri::async_runtime::block_on(
                 agent_store.recover_interrupted_with_run_recovery(
@@ -1282,12 +1297,15 @@ fn main() {
                 &data_dir, &resource_dir, runtime_supervisor.clone(),
             );
             startup_timeline.checkpoint("sandbox_resources");
-            let sandbox_probe = Arc::new(
-                WindowsSandboxReadinessProbe::new(storage_layout.sandbox_setup_marker())
+            let sandbox_probe: Arc<dyn SandboxBackend> = Arc::new(
+                platform_probe(storage_layout.sandbox_setup_marker())
                     .with_runtime(
                         managed_sandbox.launcher.clone(),
                         managed_sandbox.canary.clone(),
-                        data_dir.join("sandbox/windows/attestation"),
+                        data_dir
+.join("sandbox")
+.join(hachimi_sandbox::backend_dir_key())
+.join("attestation"),
                     )
                     .with_runtime_integrity(managed_sandbox.expected_integrity.clone()),
             );
@@ -1325,6 +1343,7 @@ fn main() {
                 agent_store.clone(),
                 data_dir.join("worktrees"),
                 data_dir.join("attachments"),
+                system_runtime.clone(),
             );
             let reconciled_handoffs =
                 tauri::async_runtime::block_on(workbench.reconcile_handoffs())?;
@@ -1531,6 +1550,7 @@ fn main() {
                     skills: skill_host.clone(),
                     mcp: mcp_control.clone(),
                     sandbox_backend: sandbox_backend.clone(),
+                    system_runtime: system_runtime.clone(),
                     browser: Arc::clone(&browser),
                     embedded_browser: embedded_agent_browser,
                     computer: Arc::clone(&computer),
@@ -1623,6 +1643,7 @@ fn main() {
                     scheduler: Arc::clone(&scheduler),
                     processes: Arc::clone(&process_registry),
                     sandbox_runtime: Arc::clone(&sandbox_runtime),
+                    system_runtime: system_runtime.clone(),
                     run_launcher: Arc::new(
                         domain_run_launcher::DesktopDomainRunLauncherAdapter::new(
                             app.handle().clone(),
@@ -1676,6 +1697,7 @@ fn main() {
                 process_event_bridges: ProcessEventBridgeRegistry::default(),
                 scheduler_handle: Mutex::new(None),
                 runtime_supervisor: runtime_supervisor.clone(),
+                system_runtime: system_runtime.clone(),
                 workspace_watches,
                 workspace_searches,
                 agent_event_streams: Mutex::new(BTreeMap::new()),
@@ -1703,6 +1725,11 @@ fn main() {
                 placement_revision: AtomicU64::new(0),
             };
             app.manage(state);
+            start_system_runtime_refresh(
+                system_runtime,
+                runtime_supervisor.clone(),
+                app.handle().clone(),
+            );
             let reconciliation_store = agent_store.clone();
             let reconciliation_gateway = gateway.clone();
             tauri::async_runtime::spawn(async move {

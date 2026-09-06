@@ -7,7 +7,7 @@
 use hachimi_protocol::{
     ProcessEvent, ProcessListRequest, ProcessReadRequest, ProcessReadSnapshot,
     ProcessResizeRequest, ProcessSessionId, ProcessSessionRecord, ProcessSpawnRequest,
-    ProcessTerminateRequest, ProcessWriteRequest,
+    ProcessTerminateRequest, ProcessWriteRequest, ShellLaunchSpec,
 };
 use parking_lot::Mutex;
 use std::collections::BTreeSet;
@@ -69,20 +69,16 @@ async fn dispatch_process(
 }
 
 #[tauri::command]
-pub(super) fn get_default_shell(window: WebviewWindow) -> Result<Vec<String>, CommandError> {
+pub(super) fn get_default_shell(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<ShellLaunchSpec, CommandError> {
+    state.authorize(&window, ControlMethod::WorkbenchWindow)?;
     require_window(&window, "workbench")?;
-    #[cfg(windows)]
-    {
-        Ok(vec!["powershell.exe".into()])
-    }
-    #[cfg(not(windows))]
-    {
-        let shell = std::env::var("SHELL")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "/bin/zsh".into());
-        Ok(vec![shell])
-    }
+    state
+        .system_runtime
+        .default_shell()
+        .map_err(|error| CommandError::new(error.code, error.message))
 }
 
 #[tauri::command]

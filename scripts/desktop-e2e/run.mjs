@@ -52,6 +52,7 @@ const project = join(temporaryRoot, "project");
 const data = join(temporaryRoot, "data");
 const webviewData = join(data, "webview");
 const attachment = join(temporaryRoot, "reference.txt");
+const systemGitGate = join(temporaryRoot, "system-git-gate.txt");
 const artifacts = resolve(root, "target/desktop-e2e-artifacts");
 const buildTarget = resolve(root, "target/desktop-e2e-build");
 const targetRoot = resolve(root, "target");
@@ -99,6 +100,7 @@ const officeStdioServer = join(artifacts, "office-mcp-stdio.mjs");
 copyFileSync(join(root, "scripts/desktop-e2e/support/office-mcp-stdio.mjs"), officeStdioServer);
 writeFileSync(join(project, "README.md"), "# Desktop E2E fixture\n", "utf8");
 writeFileSync(attachment, "Use the deterministic Desktop E2E workflow.\n", "utf8");
+writeFileSync(systemGitGate, "normal\n", "utf8");
 
 function seedAvatarMotionV5Fixtures(repositoryRoot, dataRoot) {
   const builtinRoot = join(repositoryRoot, "assets", "avatar-motions-v5");
@@ -593,6 +595,7 @@ const testEnvironment = {
   HACHIMI_DATA_DIR: data,
   HACHIMI_DESKTOP_E2E_WEBVIEW_DATA: webviewData,
   HACHIMI_DESKTOP_E2E_PROJECT_PATH: project,
+  HACHIMI_SYSTEM_RUNTIME_TEST_GIT_GATE: systemGitGate,
   HACHIMI_DESKTOP_E2E_ATTACHMENT_PATH: attachment,
   HACHIMI_DESKTOP_E2E_SANDBOX: "deterministic",
   HACHIMI_DESKTOP_E2E_PROVIDER: "deterministic",

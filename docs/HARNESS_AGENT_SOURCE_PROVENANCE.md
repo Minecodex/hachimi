@@ -9,6 +9,7 @@
 | ID                              | 仓库与 commit                                                                                            | 许可证与边界                                                                                       |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `codex-4c434651`                | OpenAI Codex `4c43465133428898aa84f0bfc02c306ed65fb66a`                                                  | Apache-2.0；选择性移植，保留 SPDX、commit、源路径和修改说明                                        |
+| `codex-2cfee7de`                | OpenAI Codex `2cfee7de25d98b20c55ced2ed82736d4c452f8a0`                                                  | Apache-2.0；Shell snapshot、环境策略与 Git doctor 的架构参考，不复制源码                           |
 | `codex-manual-20260805`         | Codex manual 2026-08-05 快照，SHA-256 `3528f93bacfae29be08f757d0f24be468b52f058fff698d78d73495cc660b147` | 产品行为与权限分层参考；不作为源码派生来源                                                         |
 | `paseo-fcc54621`                | Paseo `fcc54621ca48456958c6f0f892db1d970baa562f`                                                         | 仅验证 Plan 时间线、提问卡和确认 Gate 的前端行为适配方式；不复制源码、样式、提示词、注释或测试     |
 | `openclaw-f6d45623`             | OpenClaw `f6d456235cf011004f7cffc71a95acf6fbf1fa0a`                                                      | MIT；选择性移植，保留版权、commit、源路径和修改说明                                                |
@@ -31,6 +32,7 @@
 | Computer Use           | Codex Computer Use [ref:OAI-PRODUCT-COMPUTER-20260730] 产品文档                                                                                                                                                                                                                                                           | App-scoped Observe/Act、用户接管和系统权限以 Codex 为准；Hachimi Windows Host 独立实现                                                                                               |
 | OpenAI Provider        | Chat Completions、Responses 与 Embeddings 官方固定快照 [ref:OAI-PRODUCT-CHATCOMPLETIONS-20260730] [ref:OAI-PRODUCT-RESPONSES-20260730] [ref:OAI-PRODUCT-EMBEDDINGS-20260730]                                                                                                                                              | 只实现公开 wire shape、Remote Compaction 与公开 summary；不复制私有 Codex protocol、Prompt 或隐藏 reasoning                                                                          |
 | Git/Forge              | GitHub、GitLab、Gitee、Gitea/Forgejo 官方 API 快照 [ref:GITHUB-API-20260730] [ref:GITLAB-API-20260730] [ref:GITEE-API-20260730] [ref:GITEA-FORGEJO-API-20260730]                                                                                                                                                          | 快照只固定 create/query/update/close/merge wire contract；adapter 为 Hachimi 原创，不复制厂商 SDK                                                                                    |
+| System Runtime         | Codex `2cfee7de25d98b20c55ced2ed82736d4c452f8a0` 的 `codex-rs/core/src/shell_snapshot.rs`、`codex-rs/config/src/shell_environment_policy.rs`、`codex-rs/cli/src/doctor/git.rs`；官方配置参考的 `features.shell_snapshot` 与 `shell_environment_policy`                                                                    | 只参考 Shell snapshot、环境继承/过滤和 Git doctor 的职责边界；Hachimi 的最小环境快照、Windows 注册表合并、能力探测、绝对路径文件身份租约、协议与 UI 为原创实现，不复制 Codex 源码    |
 | 企业平台               | 企业微信官方 API、DingTalk Stream SDK Go v0.9.1 与 Feishu Go SDK v3.9.9 固定快照 [ref:WECOM-API-20260730] [ref:DINGTALK-STREAM-SDK-GO-20260731] [ref:FEISHU-SDK-GO-20260731]                                                                                                                                              | Rust 原创实现 REST、loopback AES callback、Stream/长连接 transport、mention 与附件 Artifact fencing；SDK 快照只提供 wire contract，不链接或复制 vendor SDK 运行时代码                |
 | Plugins/Connectors     | Codex Plugins [ref:OAI-PRODUCT-PLUGINS-20260730]；固定 commit 的 `codex-rs/core-plugins/**`、`codex-rs/core/src/connectors.rs`、`codex-rs/codex-mcp/**`                                                                                                                                                                   | Codex 是本地 bundle、Skills/Hooks、Connectors/MCP、Browser extension、Scheduled task template、custom UI 和权限分层主基线；Hachimi 只建设本地 Bundle 分发                            |
 | Session/Thread 恢复    | Codex `codex-rs/core/src/session/rollout_reconstruction.rs`、`codex-rs/app-server/tests/suite/v2/thread_resume.rs`                                                                                                                                                                                                        | 恢复持久历史，不等于自动重放崩溃前有副作用的活跃 Turn                                                                                                                                |
@@ -123,6 +125,9 @@ Memory 已调整为远期，当前不选择 Codex Memory 或其他实现方案�
 - `crates/hachimi-sandbox/src/runtime_manager.rs`
 - `crates/hachimi-sandbox/src/setup.rs`
 - `crates/hachimi-sandbox/tests/windows_smoke.rs`
+- `crates/hachimi-sandbox/src/seatbelt.rs`
+- `crates/hachimi-sandbox/src/seatbelt_base_policy.sbpl`
+- `crates/hachimi-sandbox/tests/macos_smoke.rs`
 - `crates/hachimi-workspace/src/diff.rs`
 - `crates/hachimi-workspace/src/file_search.rs`
 - `crates/hachimi-workspace/src/git.rs`
@@ -134,6 +139,8 @@ Memory 已调整为远期，当前不选择 Codex Memory 或其他实现方案�
 修改：路径和进程操作改为 Checkout-bound Workspace Worker、Hachimi AppContainer/restricted token、Job Object、security-capabilities + explicit handle-list、native final-path validation、deny-all network、Git plumbing、side-effect ledger 和 Tauri DTO。未嵌入 Codex Core 或其产品策略。`restricted_process.rs` 的 Hachimi handle allowlist/stdio ownership plumbing 是围绕上述来源边界的本地实现；登记在此不把未复制的 Codex 候选文件伪装成逐行移植。
 
 测试：Watch 去重/invalidations、搜索取消、Patch rollback、PTY bytes/resize/kill、Unborn Git、NTFS/reparse/path matrix、restricted process/network smoke。
+
+macOS Seatbelt 后端（2026-08-23）：`seatbelt.rs` 的 SBPL 生成与 `seatbelt_base_policy.sbpl` 的平台基线改编自 openai/codex `codex-rs/sandboxing/src/{seatbelt.rs,seatbelt_base_policy.sbpl,restricted_read_only_platform_defaults.sbpl}`，固定 commit `4f39251a010a8bd7d692d25fb33832ff06f1635a`（快照登记于 docs/references/openai/raw/OAI-PRODUCT-CODEX-SEATBELT-20260823-\*）。Hachimi 侧保持自有 Run 绑定授权、一次性 Worker 协议、attestation canary 与 fail-closed readiness；未嵌入 Codex Core。`tests/macos_smoke.rs` 为 hachimi 原生威胁模型镜像实现。
 
 ### Skills progressive disclosure
 
@@ -168,7 +175,7 @@ Memory 已调整为远期，当前不选择 Codex Memory 或其他实现方案�
 
 ## 原创模块说明
 
-`hachimi-model-runtime`、AgentStore migrations、active delta hub、metadata-only Audit、Capability Grant、UserInput secret broker、Office Skills 内容、Workbench UI、Task Center、Tauri event bridge 和 StorageLayout 是按 Hachimi contract 独立实现；其行为可能与上述架构约束互操作，但未标记为 copied/translated/adapted。
+`hachimi-system-runtime`、`hachimi-model-runtime`、AgentStore migrations、active delta hub、metadata-only Audit、Capability Grant、UserInput secret broker、Office Skills 内容、Workbench UI、Task Center、Tauri event bridge 和 StorageLayout 是按 Hachimi contract 独立实现；其行为可能与上述架构约束互操作，但未标记为 copied/translated/adapted。System Runtime 只参考 `codex-2cfee7de` 的职责边界；其中的宿主环境最小化、Windows 注册表/App Paths 合并、能力探测、revision 与文件身份租约均为 Hachimi 原创实现。
 
 本期 Local Host 的以下实现同样是 Hachimi 原创代码，只使用上表的产品行为/安全边界参考，没有复制候选源码：
 

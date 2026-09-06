@@ -166,11 +166,16 @@ pub(super) async fn inspect_project_git_state(
     project_id: &ProjectId,
 ) -> Result<ProjectGitSnapshot, CommandError> {
     let project = project(state, project_id).await?;
-    let host = WorkspaceHostClient::new(
+    let git = state
+        .system_runtime
+        .require_git(hachimi_protocol::SystemToolCapability::GitInspect)
+        .map_err(|error| CommandError::new(error.code, error.message))?;
+    let host = WorkspaceHostClient::new_with_git_runtime(
         workspace_worker_path(),
         &project.root_path,
         format!("project-inspect:{}", project.id.as_str()),
         0,
+        Some(git),
     );
     let snapshot = match host
         .execute(
@@ -250,10 +255,14 @@ pub(super) async fn create_project_empty_initial_commit(
             "an empty initial commit is only available for an unborn branch",
         ));
     }
+    let git = state
+        .system_runtime
+        .require_git(hachimi_protocol::SystemToolCapability::GitLocalMutation)
+        .map_err(|error| CommandError::new(error.code, error.message))?;
     if state.sandbox_status() != hachimi_sandbox::SandboxStatus::Enforced {
         return Err(CommandError::new(
             "sandbox_not_enforced",
-            "Git initialization is disabled until Windows sandbox attestation succeeds",
+            "Git initialization is disabled until OS sandbox attestation succeeds",
         ));
     }
     let fingerprint = initial_commit_fingerprint(&request);
@@ -287,8 +296,13 @@ pub(super) async fn create_project_empty_initial_commit(
 
     let (session_id, run_id, checkout_id) = project_git_ids(&project.id);
     let worker_program = workspace_worker_path();
-    let mut host =
-        WorkspaceHostClient::new(&worker_program, &project.root_path, checkout_id.as_str(), 0);
+    let mut host = WorkspaceHostClient::new_with_git_runtime(
+        &worker_program,
+        &project.root_path,
+        checkout_id.as_str(),
+        0,
+        Some(git.clone()),
+    );
     if !deterministic_test_sandbox(&state) {
         let backend = state.sandbox_backend().ok_or_else(|| {
             CommandError::new(
@@ -300,6 +314,7 @@ pub(super) async fn create_project_empty_initial_commit(
             Path::new(&project.root_path),
             host.run_temp_dir(),
             &worker_program,
+            Some(git.executable()),
         )
         .map_err(|error| CommandError::operation("sandbox_acl_prepare_failed", error))?;
         hachimi_sandbox::attest_workspace_boundaries(
@@ -332,6 +347,7 @@ pub(super) async fn create_project_empty_initial_commit(
                 session_id: session_id.clone(),
                 run_id: run_id.clone(),
                 grants,
+                git_metadata_writable: false,
             },
             Arc::new(ProjectGitLaunchGuard {
                 session_id,
@@ -348,11 +364,18 @@ pub(super) async fn create_project_empty_initial_commit(
         None
     } else {
         Some(
-            hachimi_sandbox::prepare_git_mutation_acl(Path::new(&project.root_path)).map_err(
-                |error| CommandError::operation("project_git_acl_prepare_failed", error),
-            )?,
+            hachimi_sandbox::prepare_git_mutation_acl(
+                Path::new(&project.root_path),
+                git.executable(),
+            )
+            .map_err(|error| CommandError::operation("project_git_acl_prepare_failed", error))?,
         )
     };
+    // Same lease-driven carve-out as workspace mutations: the fixed initial
+    // commit may write `.git` while the verified lease is held.
+    if git_acl.is_some() {
+        host = host.with_git_metadata_writable(true);
+    }
     let output = host
         .execute(
             WorkspaceOperation::GitCreateEmptyInitialCommit {
@@ -386,6 +409,7 @@ pub(super) async fn create_project_empty_initial_commit(
                 WorkspaceErrorCode::InvalidRequest
                     | WorkspaceErrorCode::Conflict
                     | WorkspaceErrorCode::Unauthorized
+                    | WorkspaceErrorCode::SystemGitChanged
             ) =>
         {
             let _ = state
@@ -396,10 +420,12 @@ pub(super) async fn create_project_empty_initial_commit(
                     &request.context.idempotency_key,
                 )
                 .await;
-            return Err(CommandError::new(
-                format!("workspace_{:?}", error.code).to_lowercase(),
-                error.message,
-            ));
+            let code = if error.code == WorkspaceErrorCode::SystemGitChanged {
+                "system_git_changed".to_owned()
+            } else {
+                format!("workspace_{:?}", error.code).to_lowercase()
+            };
+            return Err(CommandError::new(code, error.message));
         }
         Err(error) => {
             return Err(CommandError::new(

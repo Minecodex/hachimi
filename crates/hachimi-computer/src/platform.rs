@@ -9,18 +9,34 @@ use hachimi_protocol::{
     ComputerAction, ComputerAppDescriptor, ComputerRuntimeHealth, ComputerWindowIdentity,
 };
 use parking_lot::Mutex;
+use sha2::Digest as _;
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 use crate::MAX_FRAME_IMAGE_BYTES;
 use crate::{CapturedWindow, ComputerBroker, ComputerBrokerFuture, ComputerHostError};
 
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 
 const FRAME_STORE_TTL: Duration = Duration::from_secs(30);
-#[cfg(any(windows, test))]
+
+/// Requests the macOS Screen Recording permission prompt. No-op elsewhere.
+pub fn request_screen_capture_access() {
+    #[cfg(target_os = "macos")]
+    macos::request_screen_capture_access();
+}
+
+pub(super) fn fingerprint(value: &impl serde::Serialize) -> String {
+    sha2::Sha256::digest(serde_json::to_vec(value).unwrap_or_default())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+#[cfg(any(windows, target_os = "macos", test))]
 const MAX_STORED_FRAMES: usize = 8;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 const MAX_STORED_FRAME_BYTES: usize = 64 * 1024 * 1024;
 static LEGACY_FRAME_CLEANUP: Once = Once::new();
 
@@ -30,7 +46,11 @@ pub fn computer_runtime_health() -> ComputerRuntimeHealth {
     {
         windows::runtime_health()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        macos::runtime_health()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         ComputerRuntimeHealth {
             os_supported: false,
@@ -55,7 +75,7 @@ struct FrameStore {
 }
 
 impl FrameStore {
-    #[cfg(any(windows, test))]
+    #[cfg(any(windows, target_os = "macos", test))]
     fn insert(
         &mut self,
         token: String,
@@ -229,7 +249,7 @@ impl ComputerBroker for PlatformComputerBroker {
 }
 
 #[cfg(windows)]
-fn platform_user_input_marker() -> Option<u64> {
+fn platform_user_input_marker_windows() -> Option<u64> {
     use ::windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 
     let mut input = LASTINPUTINFO {
@@ -240,9 +260,24 @@ fn platform_user_input_marker() -> Option<u64> {
     (unsafe { GetLastInputInfo(&mut input) }.as_bool()).then_some(u64::from(input.dwTime))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn platform_user_input_marker_macos() -> Option<u64> {
+    macos::user_input_marker()
+}
+
 fn platform_user_input_marker() -> Option<u64> {
-    None
+    #[cfg(windows)]
+    {
+        platform_user_input_marker_windows()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        platform_user_input_marker_macos()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        None
+    }
 }
 
 #[cfg(windows)]
@@ -250,12 +285,22 @@ fn list_windows() -> Result<Vec<ComputerWindowIdentity>, ComputerHostError> {
     windows::list_windows()
 }
 
+#[cfg(target_os = "macos")]
+fn list_windows() -> Result<Vec<ComputerWindowIdentity>, ComputerHostError> {
+    macos::list_windows()
+}
+
 #[cfg(windows)]
 fn foreground_window() -> Result<ComputerWindowIdentity, ComputerHostError> {
     windows::foreground_window()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn foreground_window() -> Result<ComputerWindowIdentity, ComputerHostError> {
+    macos::foreground_window()
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn foreground_window() -> Result<ComputerWindowIdentity, ComputerHostError> {
     Err(ComputerHostError::Broker(
         "the platform Computer broker is Windows-only".into(),
@@ -267,12 +312,17 @@ fn app_icon_png(app: &ComputerAppDescriptor) -> Result<Option<Vec<u8>>, Computer
     windows::app_icon_png(app)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn app_icon_png(app: &ComputerAppDescriptor) -> Result<Option<Vec<u8>>, ComputerHostError> {
+    macos::app_icon_png(app)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn app_icon_png(_app: &ComputerAppDescriptor) -> Result<Option<Vec<u8>>, ComputerHostError> {
     Ok(None)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn list_windows() -> Result<Vec<ComputerWindowIdentity>, ComputerHostError> {
     Err(ComputerHostError::Broker(
         "the platform Computer broker is Windows-only".into(),
@@ -284,7 +334,12 @@ fn read_identity(window_handle: &str) -> Result<ComputerWindowIdentity, Computer
     windows::read_identity(window_handle)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn read_identity(window_handle: &str) -> Result<ComputerWindowIdentity, ComputerHostError> {
+    macos::read_identity(window_handle)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn read_identity(_window_handle: &str) -> Result<ComputerWindowIdentity, ComputerHostError> {
     Err(ComputerHostError::Broker(
         "the platform Computer broker is Windows-only".into(),
@@ -298,19 +353,51 @@ fn capture_window(
 ) -> Result<CapturedWindow, ComputerHostError> {
     let identity = read_identity(window_handle)?;
     let captured = windows::capture_window(window_handle)?;
+    store_captured_frame(
+        frame_tokens,
+        identity,
+        captured.png_bytes,
+        captured.width,
+        captured.height,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn capture_window(
+    window_handle: &str,
+    frame_tokens: &Mutex<FrameStore>,
+) -> Result<CapturedWindow, ComputerHostError> {
+    let identity = read_identity(window_handle)?;
+    let captured = macos::capture_window(window_handle)?;
+    store_captured_frame(
+        frame_tokens,
+        identity,
+        captured.png_bytes,
+        captured.width,
+        captured.height,
+    )
+}
+
+fn store_captured_frame(
+    frame_tokens: &Mutex<FrameStore>,
+    identity: ComputerWindowIdentity,
+    png_bytes: Vec<u8>,
+    width: u32,
+    height: u32,
+) -> Result<CapturedWindow, ComputerHostError> {
     let token = format!("computer-frame:{}", uuid::Uuid::new_v4());
     frame_tokens
         .lock()
-        .insert(token.clone(), captured.png_bytes, Instant::now())?;
+        .insert(token.clone(), png_bytes, Instant::now())?;
     Ok(CapturedWindow {
         target: identity,
         image_token: token,
-        width: captured.width,
-        height: captured.height,
+        width,
+        height,
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn capture_window(
     _window_handle: &str,
     _frame_tokens: &Mutex<FrameStore>,
@@ -328,7 +415,15 @@ fn perform_action(
     windows::perform_action(target, action)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn perform_action(
+    target: &ComputerWindowIdentity,
+    action: &ComputerAction,
+) -> Result<(), ComputerHostError> {
+    macos::perform_action(target, action)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn perform_action(
     _target: &ComputerWindowIdentity,
     _action: &ComputerAction,

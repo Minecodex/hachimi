@@ -47,18 +47,19 @@ pub(super) fn run(data_root: &Path) {
         )
         .unwrap_or_else(|error| panic!("failed to register builtin providers: {error}"));
         let providers = builtins.registry.clone();
-        let sandbox_runtime_root = data_root
-            .join("sandbox/windows/runtime")
-            .join(hachimi_sandbox::SANDBOX_POLICY_VERSION);
+        let sandbox_root = data_root
+            .join("sandbox")
+            .join(hachimi_sandbox::backend_dir_key());
+        let sandbox_runtime_root = sandbox_root
+            .join("runtime")
+            .join(hachimi_sandbox::current_policy_version());
         let backend: Arc<dyn hachimi_sandbox::SandboxBackend> = Arc::new(
-            hachimi_sandbox::WindowsSandboxReadinessProbe::new(
-                data_root.join("sandbox/windows/setup.json"),
-            )
-            .with_runtime(
-                sandbox_runtime_root.join(executable_name("hachimi-sandbox-launcher")),
-                sandbox_runtime_root.join(executable_name("hachimi-sandbox-canary")),
-                data_root.join("sandbox/windows/attestation"),
-            ),
+            hachimi_sandbox::platform_probe(sandbox_root.join("setup.json"))
+                .with_runtime(
+                    sandbox_runtime_root.join(executable_name("hachimi-sandbox-launcher")),
+                    sandbox_runtime_root.join(executable_name("hachimi-sandbox-canary")),
+                    sandbox_root.join("attestation"),
+                ),
         );
         let plugins = hachimi_extensions::PluginHost::new(store.clone(), data_root.join("plugins"));
         for definition in plugins

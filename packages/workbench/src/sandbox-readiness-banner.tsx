@@ -73,8 +73,8 @@ export function SandboxReadinessBanner(props: {
         <span class="sandbox-readiness-copy">
           <strong>
             {zh()
-              ? "Windows Sandbox 尚未通过运行时验证"
-              : "Windows Sandbox is not runtime-attested"}
+              ? "系统 Sandbox 尚未通过运行时验证"
+              : "OS sandbox is not runtime-attested"}
           </strong>
           <small>
             {report()?.stableErrorCode ?? "sandbox_not_enforced"}

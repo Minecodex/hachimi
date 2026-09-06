@@ -1,6 +1,6 @@
 # P3：macOS Computer Use Broker
 
-- 状态：未开始
+- 状态：进行中（M1/M2/M3/M4 已完成实现与自动化验证。真实截图与真实输入注入待维护者授予本机 TCC（屏幕录制 + 辅助功能）后，由 `examples/capture_probe` 与 macos 压测迭代复核）
 - 前置：P1 完成；与 P2 无依赖关系，可并行开发
 - 目标：`hachimi-computer` 新增 `platform/macos.rs`，实现 `ComputerBroker` trait；Computer Observe/Act 在 mac 上可用。
 - 备注：这是单一最大移植面（`platform/windows.rs` 1722 行），但 trait 边界干净，可作为独立模块落地，不影响其他阶段。
@@ -46,19 +46,24 @@
 
 ## 3. 设计决策点（实现前确认）
 
-1. **提权/受保护目标判定**：Windows 用完整性级别 + desktop 名拒绝操作受保护目标；macOS 无等价概念。选项：检测目标进程是否 root 拥有 / 是否受 SIP 保护，或仅依赖 TCC 权限态。结论需写入 ADR-0004 增补。
+1. **提权/受保护目标判定**（已定，M1 落地）：`elevated` = 目标窗口属主进程 uid==0（`proc_pidinfo`/`PROC_PIDTBSDINFO`）；`protected_desktop` 恒 false（mac 无安全桌面；SIP/TCC 边界由门禁与权限态覆盖）。待写入 ADR-0004 增补（M4）。
 2. **权限引导 UX**：Screen Recording 与 Accessibility 均需用户到系统设置授权，首次授权需重启应用（Accessibility）或不需（Screen Recording 可动态）。需要在产品层做权限状态检测与引导（Tauri 侧 + `tauri.conf.json` 的 `bundle.macOS` 描述字段）。
 3. **Retina 坐标**：CGEvent 用全局点坐标，截图为像素，需统一 scale factor 换算（BackingScaleFactor）。
 
 ## 4. 任务清单
 
-- [ ] 新增 `crates/hachimi-computer/src/platform/macos.rs`，按 `ComputerBroker` 逐个方法实现；`platform.rs` 的 `cfg(not(windows))` unsupported 桩替换为 macos 分支。
-- [ ] `Cargo.toml` 增加 `[target.'cfg(target_os = "macos")'.dependencies]`：core-graphics / core-foundation / objc2 / objc2-app-kit / security-framework / screencapturekit（按选型定）。
-- [ ] `lib.rs:753-759` `LaunchApp` 的 `.exe` 校验平台化（mac 校验 `.app` / bundle id）。
-- [ ] `computer_runtime_health` mac 分支：报告 TCC 权限状态（Screen Recording / Accessibility 是否已授权），驱动 UI 引导。
-- [ ] `examples/stress_fixture.rs` 新增 AppKit 版 GUI 夹具（用于 capture/input 压测）。
-- [ ] `scripts/desktop-stress/run.mjs:55,216` 的 WGC 压测 fixture 增加 mac 分支或按平台跳过。
-- [ ] 单元/集成测试：窗口枚举、截图、输入注入（可用 AX 自检回路）；权限缺失时 fail-closed 的报错路径。
+- [x] 新增 `crates/hachimi-computer/src/platform/macos.rs`（M1）：`runtime_health` / `list_windows` / `foreground_window` / `read_identity` / `app_icon_png` / `user_input_marker` 已实现；capture/perform 为 M2/M3 显式桩。
+- [x] `Cargo.toml` macOS 依赖（M1 选型落地）：objc2 / objc2-foundation / objc2-app-kit / core-graphics / core-foundation / libc（全部沿用锁内版本族 pin 进 workspace）；`objc2-screen-capture-kit` 0.3.2 留 M2。
+- [x] `lib.rs:753-759` `LaunchApp` 的 `.exe` 校验平台化（M4 落地：mac 走 `open -a`，校验 bundle id/app 名/`Safari` 形；Windows 形状不变）。
+- [x] `computer_runtime_health` mac 分支（M1）：TCC 屏幕录制 + 辅助功能探测 + macOS 14 门槛（SCScreenshotManager 前置）+ root 判定；新稳定错误码 `computer_capture_requires_macos14` / `computer_screen_recording_required` / `computer_accessibility_required`。
+- [x] `examples/stress_fixture.rs` 新增 AppKit 版 GUI 夹具（M4：NSWindow + NSTextField，标题 `Hachimi Computer fixture`）。
+- [x] `scripts/desktop-stress/run.mjs` mac 分支（M4：darwin real 模式跑 `captures_and_controls_the_macos_stress_fixture`；浏览器阶段在 CEF mac 落地（P4）前保持 Windows-only）。
+- [x] M1 测试：句柄解析、identity 稳定性、真机枚举+前台窗口一致性回读（live test）。
+- [x] M2 捕获（`platform/macos.rs`）：SCShareableContent 定位窗口 → SCContentFilter(desktopIndependentWindow) → SCScreenshotManager 单帧（原生分辨率，隐去光标）→ NSBitmapImageRep PNG → 复用 FrameStore；TCC 未授权/版本不足时 fail-closed 稳定错误码；`examples/capture_probe.rs` 端到端探针（枚举→前台→捕获→读帧→落盘）。
+- [x] 捕获/输入测试（M2/M3）：
+  - 纯单元测试：键名→ANSI 键码、修饰键去重/拒绝、鼠标按钮映射、窗口相对→全局坐标换算（19 项 mac 测试全绿）。
+  - live 测试：真机枚举+前台一致性（M1）、TCC 未授权时捕获 fail-closed/授权后真实截图（M2）。
+  - 新增 `captures_and_controls_the_macos_stress_fixture`（ignore，压测脚本驱动）：夹具窗口枚举→身份→截图→AX 移动/恢复迭代。
 
 ## 出口标准
 

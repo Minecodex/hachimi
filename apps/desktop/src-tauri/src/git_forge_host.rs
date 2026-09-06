@@ -6,7 +6,9 @@ use hachimi_protocol::{
     ForgeOperationRecord, ForgeOperationStatus, ForgeRepositoryIdentity, GitPushResponse,
     GitRemoteRecord, NetworkGrant, RunId, SessionId,
 };
-use hachimi_workspace::{WorkspaceHostClient, WorkspaceOperation, WorkspaceOutput};
+use hachimi_workspace::{
+    WorkspaceError, WorkspaceErrorCode, WorkspaceHostClient, WorkspaceOperation, WorkspaceOutput,
+};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -94,10 +96,7 @@ pub(super) async fn list_git_remotes(
             "git_remote_protocol_mismatch",
             "Workspace Host did not return Git remotes",
         )),
-        Err(error) => Err(GitForgeHostError::rejected(
-            "git_remote_host_failed",
-            error.message,
-        )),
+        Err(error) => Err(workspace_host_error(error, "git_remote_host_failed", false)),
     }
 }
 
@@ -179,6 +178,9 @@ pub(super) async fn push_git_remote(
             "git_push_indeterminate",
             "Git push dispatch returned an unexpected receipt",
         )),
+        Err(error) if error.code == WorkspaceErrorCode::SystemGitChanged => {
+            Err(workspace_host_error(error, "git_push_indeterminate", true))
+        }
         Err(error) => Err(GitForgeHostError::indeterminate(
             "git_push_indeterminate",
             format!(
@@ -665,6 +667,21 @@ fn forge_error_is_indeterminate(error: &ForgeError) -> bool {
         || matches!(error, ForgeError::Http { status, .. } if status.is_server_error())
 }
 
+fn workspace_host_error(
+    error: WorkspaceError,
+    fallback_code: &'static str,
+    fallback_indeterminate: bool,
+) -> GitForgeHostError {
+    if error.code == WorkspaceErrorCode::SystemGitChanged {
+        return GitForgeHostError::rejected("system_git_changed", error.message);
+    }
+    if fallback_indeterminate {
+        GitForgeHostError::indeterminate(fallback_code, error.message)
+    } else {
+        GitForgeHostError::rejected(fallback_code, error.message)
+    }
+}
+
 fn forge_error(error: ForgeError) -> GitForgeHostError {
     if forge_error_is_indeterminate(&error) {
         return GitForgeHostError::indeterminate(
@@ -806,5 +823,16 @@ mod tests {
         assert!(grant.enabled);
         assert_eq!(grant.hosts, vec!["forge.example.test", "github.com"]);
         assert_eq!(grant.protocols, vec!["file", "https", "ssh"]);
+    }
+
+    #[test]
+    fn workspace_git_drift_keeps_the_system_runtime_error_code() {
+        let error = workspace_host_error(
+            WorkspaceError::new(WorkspaceErrorCode::SystemGitChanged, "Git was replaced"),
+            "git_remote_host_failed",
+            false,
+        );
+        assert_eq!(error.code, "system_git_changed");
+        assert!(!error.indeterminate);
     }
 }

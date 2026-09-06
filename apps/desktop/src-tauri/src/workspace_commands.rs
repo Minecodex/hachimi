@@ -166,7 +166,7 @@ pub(super) async fn get_workspace_git(
     authorize_workspace(&window, &state)?;
     let workspace =
         resolve_session_workspace(&state, &request.session_id, &request.checkout_id).await?;
-    let output = workspace_client(&workspace)
+    let output = workspace_client(&state, &workspace)?
         .execute(
             WorkspaceOperation::GitWorkspaceSnapshot {
                 history_limit: request.history_limit.clamp(1, 50),
@@ -531,13 +531,21 @@ pub(super) async fn resolve_session_workspace(
     })
 }
 
-fn workspace_client(workspace: &ResolvedWorkspace) -> WorkspaceHostClient {
-    WorkspaceHostClient::new(
+fn workspace_client(
+    state: &DesktopState,
+    workspace: &ResolvedWorkspace,
+) -> Result<WorkspaceHostClient, CommandError> {
+    let git = state
+        .system_runtime
+        .require_git(hachimi_protocol::SystemToolCapability::GitInspect)
+        .map_err(|error| CommandError::new(error.code, error.message))?;
+    Ok(WorkspaceHostClient::new_with_git_runtime(
         workspace_worker_path(),
         &workspace.checkout.path,
         workspace.checkout.id.as_str(),
         workspace.run.generation,
-    )
+        Some(git),
+    ))
 }
 
 fn authorize_workspace(window: &WebviewWindow, state: &DesktopState) -> Result<(), CommandError> {
@@ -546,10 +554,12 @@ fn authorize_workspace(window: &WebviewWindow, state: &DesktopState) -> Result<(
 }
 
 fn workspace_error(error: hachimi_workspace::WorkspaceError) -> CommandError {
-    CommandError::new(
-        format!("workspace_{:?}", error.code).to_lowercase(),
-        error.message,
-    )
+    let code = if error.code == hachimi_workspace::WorkspaceErrorCode::SystemGitChanged {
+        "system_git_changed".to_owned()
+    } else {
+        format!("workspace_{:?}", error.code).to_lowercase()
+    };
+    CommandError::new(code, error.message)
 }
 
 fn unexpected_output(expected: &str) -> CommandError {

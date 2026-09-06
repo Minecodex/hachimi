@@ -1,29 +1,35 @@
 # P5：发布链路
 
-- 状态：未开始
+- 状态：进行中——开发版通道（方案 A：GitHub Release 直发 ad-hoc 签名 dmg）已于 2026-09-05 落地并本机验收（`pnpm build:installer` 出 dmg、重签断言、quarantine 模拟、启动冒烟）；正式发布项（付费签名公证、release gate、E2E）未动
 - 前置：P1 完成；签名公证建议在 P4 阶段 B 之前具备（CEF helper app 需要）
 - 目标：mac 通道进入正式发布流程：签名/公证、dmg 产物、CI 矩阵、E2E 方案、发布证据链对称扩展（仅 arm64）。
 
 ## 1. 签名与公证基建
 
-- [ ] 申请/配置 Apple Developer ID（Application + Installer 证书）与 notarize 凭据（App Store Connect API key 或 notarytool profile）。
-- [ ] codesign 顺序：由内向外——dylib（sherpa-onnx 三件套）→ sidecar 二进制 → CEF framework 与 helper `.app` → 主 `.app`；全部带 hardened runtime + 对应 entitlements。
-- [ ] entitlements 设计：主 app 需 `com.apple.security.cs.allow-unsigned-executable-memory`（CEF/JIT 常见需求，实测确认）、禁用 App Sandbox 或评估开启的可行性（CEF helper 与 Seatbelt 后端的关系需与 P2/P4 结论对齐）。
+- [ ] 申请/配置 Apple Developer ID（Application + Installer 证书）与 notarize 凭据（App Store Connect API key 或 notarytool profile）。CI secrets 建议：`APPLE_CERTIFICATE`（p12 base64）/ `APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY` / `APPLE_API_KEY_PATH`（或 `APPLE_ID`+`APPLE_PASSWORD`+`APPLE_TEAM_ID`）/ `KEYCHAIN_PASSWORD`——与 tauri-action 约定对齐。
+- [ ] codesign 顺序：由内向外——dylib（sherpa-onnx 三件套）→ sidecar 二进制 → CEF framework 与 helper `.app` → 主 `.app`；全部带 hardened runtime + 对应 entitlements。**注意**：CEF 嵌套产物要在 `tauri build` 之前签好（`cef:prepare` 产出 `target/cef-bundle/` 后立刻签，tauri 只签主 app 外层，不会替你签嵌套的 helper）。
+- [ ] entitlements 设计：主 app 需 `com.apple.security.cs.allow-unsigned-executable-memory`（CEF/JIT 常见需求，实测确认）；CEF renderer helper 需 `com.apple.security.cs.allow-jit`；禁用 App Sandbox（主 app 不启用——CEF 内容进程已由 Chromium Seatbelt 沙箱接管，见 P4 阶段 C；workspace 侧由 P2 Seatbelt 后端接管）。
 - [ ] `notarytool submit` + staple 接入发布脚本；Gatekeeper 冒烟（干净机器 quarantine 下载验证）。
-- [ ] Tauri 侧：`tauri.conf.json` `bundle.macOS` 补 `signingIdentity` / `provider` / `entitlements` 配置。
+- [ ] Tauri 侧：`tauri.conf.json` `bundle.macOS` 补 `signingIdentity` / `provider` / `entitlements` 配置。`Info.plist` 目前只有 `NSMicrophoneUsageDescription`（语音够用；若内嵌浏览器页面要用摄像头再补 `NSCameraUsageDescription`）。
 
 ## 2. 安装包与 portable 产物
 
-- [ ] bundle targets 增加 `"dmg"`（`tauri.conf.json:42`）；icon 已含 `.icns`（P1）。
-- [ ] `scripts/build-portable.ps1` → `build-portable.mjs`（或新增 mac 分支）：`.app` 布局打包、dylib、无 `.exe` 后缀的 sidecar、产物清单校验从 `hachimi-cef-host.exe`/`git.exe` 改为 mac 等价物。
-- [ ] `scripts/release/build-installers.mjs:43-64` 增加 dmg 构建分支。
-- [ ] 自更新：Tauri updater 的 mac 通道（`.app.tar.gz` + 签名），与 Windows NSIS 通道并存。
+> 通道决策（2026-08-30）：**开发版走方案 A——GitHub Release 直发 ad-hoc 签名 dmg**（免费，无 Developer ID / 无公证），用户首次打开右键 → 打开 放行一次；正式发布再升级付费签名 + 公证（第 1 节保留）。分发说明必须写在 release notes。Homebrew cask 为可选增强通道（brew 下载无 quarantine，更顺滑），暂不做。
+
+- [x] bundle targets 增加 `"dmg"`（`tauri.conf.json`）；icon 已含 `.icns`（P1）。
+- [x] `scripts/release/build-installers.mjs` 增加 mac 分支（`buildMacInstaller`：`tauri build --bundles app,dmg`，清理 `bundle/macos` + `bundle/dmg`；Windows 行为不变）。
+- [x] 出包验收：`pnpm build:installer` 在 mac 产出 `Hachimi_<version>_aarch64.dmg`；链路内含自内向外 ad-hoc 重签（修复 tauri 拷贝资源后留下的失效资源封条）+ `codesign --verify --deep --strict` fail-closed 断言 + hdiutil dmg（带 Applications 快捷方式）。本机实测：dmg 挂载安装、quarantine 模拟下 `spctl` 按预期拒绝（对应用户右键打开）、移除 quarantine 后启动存活。
+- [x] 打包期修复（实测暴露）：`build.rs` 为 mac 追加 `-Wl,-rpath,@executable_path/../Resources/sherpa-onnx`——此前 `.app` 离开 dev shell 就因 `@rpath/libsherpa-onnx-c-api.dylib` 找不到而秒退（dev 一直靠 `DYLD_FALLBACK_LIBRARY_PATH` 掩盖）。
+- [x] ~~`scripts/build-portable.ps1` 的 mac 等价~~（方案 A 下 portable 非必需，优先级降低；P2 移交项保持 P5 内）。
+- [ ] 自更新：Tauri updater 的 mac 通道（`.app.tar.gz` + 签名）。注意：**当前各平台均未接 updater 插件**（`tauri.conf.json` plugins 为空），这是全新能力而非与 Windows 并存——首发可不做，用户手动下载新版 dmg 即可。
+
+> 备注：打包机器需预留磁盘余量（`.app` ≈1.4GB，dmg 临时目录会再复制一份；本机磁盘打满曾导致拷残缺包出现离奇启动 panic，先 `df -h` 确认）。
 
 ## 3. CI 矩阵
 
 现状：`.github/workflows/ci.yml:12-108` 5 个 job 全部 `runs-on: windows-latest`；`windows-release-gate.yml` 用 `[self-hosted, windows, x64]` runner。
 
-- [ ] `ci.yml` 增加 `macos-14`（arm64）job：rust 静态检查 + `cargo test` + UI 测试（前端测试本身跨平台）。
+- [x] `ci.yml` 增加 `macos-14`（arm64）job：rust 静态检查 + `cargo test` + CEF host 冒烟（2026-08-30 落地的最小回归网；前端测试仍由 Windows job 承担，未含 release gate）。
 - [ ] 新增 `mac-release-gate.yml`（或扩展 windows-release-gate 为多平台）：签名公证后的 dmg / portable 产物、产物 manifest、证据上传。
 - [ ] `publish-release.yml:127-138` 的 `gh release create` 资产 glob 增加 `*.dmg` / `*.app.tar.gz`。
 
@@ -73,11 +79,11 @@
 
 ## 7. 杂项收尾
 
-- [ ] `scripts/reset-portable-data.ps1`/`.cmd` 的 sh/mjs 等价（含 mac 凭据清理：keychain 条目，替代 `cmdkey.exe`）。
-- [ ] `scripts/assert-windows-toast.ps1` 的 mac 等价或按平台跳过。
-- [ ] `scripts/release/check-disk-space.ps1` / `test-package-licenses.ps1` 跨平台化。
-- [ ] `docs/ROADMAP.md` 各能力行的"Windows 本地测试"证据列更新为含 mac 状态；`docs/adr/0001/0004/0005` 增补 mac 语义。
-- [ ] `AGENTS.md` 如涉及平台约定则同步更新。
+- [ ] `scripts/reset-portable-data.ps1`/`.cmd` 的 sh/mjs 等价（含 mac 凭据清理：keychain 条目，替代 `cmdkey.exe`）。（方案 A 下 portable 缓议，此项随之后移）
+- [ ] `scripts/assert-windows-toast.ps1` 的 mac 等价或按平台跳过（随 E2E 选型一起定）。
+- [x] `scripts/release/check-disk-space.ps1` 跨平台化（2026-09-05：新增 `check-disk-space.mjs`，`statfsSync` 实现，接入 `build-installers.mjs` mac 分支最低 8GiB 前置门槛；Windows gate 保留 ps1）；`test-package-licenses.ps1` 跨平台化仍待做。
+- [x] `docs/ROADMAP.md` 与 ADR 增补 mac 语义（2026-09-05：ROADMAP 的 Browser/Computer、跨平台验证行与"当前范围"更新；ADR-0004 追加 macOS Browser host 修订段；ADR-0001 的 Seatbelt 修订段 P2 已写；ADR-0005 平台中立无需改）。
+- [x] `AGENTS.md` 如涉及平台约定则同步更新（复核：AGENTS.md 无平台特定约定，无需改）。
 
 ## 出口标准
 

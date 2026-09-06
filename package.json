@@ -30,6 +30,7 @@
     "test:desktop:e2e:prepare": "node scripts/windows-only.mjs scripts/prepare-desktop-e2e-tools.ps1",
     "test:desktop:e2e": "corepack pnpm test:desktop:e2e:prepare && node scripts/desktop-e2e/run.mjs",
     "test:desktop:stress": "node scripts/desktop-stress/run.mjs",
+    "test:cef:mac": "node scripts/test-cef-host.mjs",
     "sidecars:prepare": "node scripts/prepare-workspace-worker.mjs dev",
     "cef:prepare": "node scripts/prepare-desktop-runtime.mjs release",
     "check:prepare": "corepack pnpm sidecars:prepare && corepack pnpm cef:prepare",

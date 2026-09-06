@@ -90,6 +90,9 @@ struct EmbeddedBrowserRuntime<R: Runtime> {
     next_request_id: AtomicU64,
     next_generation: AtomicU64,
     active_generation: AtomicU64,
+    /// macOS OSR desktop composite: per-tab overlay views above the WKWebView.
+    #[cfg(target_os = "macos")]
+    overlay: crate::cef_overlay::CefOverlayManager,
 }
 
 #[derive(Clone)]
@@ -99,7 +102,7 @@ pub struct EmbeddedBrowserService<R: Runtime> {
 
 impl<R: Runtime> EmbeddedBrowserService<R> {
     pub fn new(app: AppHandle<R>, store: AgentStore, data_dir: &Path, resource_dir: &Path) -> Self {
-        Self {
+        let service = Self {
             runtime: Arc::new(EmbeddedBrowserRuntime {
                 app,
                 store,
@@ -115,8 +118,28 @@ impl<R: Runtime> EmbeddedBrowserService<R> {
                 next_request_id: AtomicU64::new(1),
                 next_generation: AtomicU64::new(1),
                 active_generation: AtomicU64::new(0),
+                #[cfg(target_os = "macos")]
+                overlay: crate::cef_overlay::CefOverlayManager::new(),
             }),
+        };
+        #[cfg(target_os = "macos")]
+        {
+            service
+                .runtime
+                .overlay
+                .set_frames_dir(service.runtime.profile_dir.join("frames"));
+            let runtime = Arc::clone(&service.runtime);
+            service
+                .runtime
+                .overlay
+                .set_input_handler(Arc::new(move |tab_id, action| {
+                    let runtime = Arc::clone(&runtime);
+                    tauri::async_runtime::spawn(async move {
+                        send_overlay_input(runtime, tab_id, action).await;
+                    });
+                }));
         }
+        service
     }
 
     pub async fn open_workspace(
@@ -158,6 +181,7 @@ impl<R: Runtime> EmbeddedBrowserService<R> {
                         y: 0,
                         width: 1,
                         height: 1,
+                        scale_factor: 1.0,
                     },
                     visible: false,
                 },
@@ -218,6 +242,7 @@ impl<R: Runtime> EmbeddedBrowserService<R> {
                     y: 0,
                     width: 1,
                     height: 1,
+                    scale_factor: 1.0,
                 },
                 visible: false,
             },
@@ -307,6 +332,8 @@ impl<R: Runtime> EmbeddedBrowserService<R> {
         self.runtime.loaded_tabs.lock().remove(tab_id);
         self.runtime.layout_revisions.lock().remove(tab_id);
         self.runtime.tab_workspaces.lock().remove(tab_id);
+        #[cfg(target_os = "macos")]
+        self.runtime.overlay.remove_tab(&self.runtime.app, tab_id);
         Ok(())
     }
 
@@ -354,6 +381,12 @@ impl<R: Runtime> EmbeddedBrowserService<R> {
             },
         )
         .await?;
+        // macOS composites windowless frames into a native overlay; keep the
+        // overlay view in lockstep with the surface bounds.
+        #[cfg(target_os = "macos")]
+        self.runtime
+            .overlay
+            .sync_tab(&self.runtime.app, tab_id, bounds, visible);
         Ok(())
     }
 
@@ -375,25 +408,31 @@ impl<R: Runtime> EmbeddedBrowserService<R> {
                 .map_err(|error| EmbeddedBrowserError::StartFailed(error.to_string()))?;
         }
         let parent_hwnd = native_window_handle(window)?;
-        let mut child = hachimi_process_policy::tokio_command(
+        let mut command = hachimi_process_policy::tokio_command(
             &self.runtime.host_executable,
             hachimi_process_policy::ProcessPolicy::HiddenBackground,
-        )
-        .arg(format!("--hachimi-parent-hwnd={parent_hwnd}"))
-        .arg(format!(
-            "--hachimi-profile-dir={}",
-            self.runtime.profile_dir.display()
-        ))
-        .arg(format!(
-            "--hachimi-log-file={}",
-            self.runtime.log_file.display()
-        ))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(false)
-        .spawn()
-        .map_err(|error| EmbeddedBrowserError::StartFailed(error.to_string()))?;
+        );
+        command
+            .arg(format!("--hachimi-parent-hwnd={parent_hwnd}"))
+            .arg(format!(
+                "--hachimi-profile-dir={}",
+                self.runtime.profile_dir.display()
+            ))
+            .arg(format!(
+                "--hachimi-log-file={}",
+                self.runtime.log_file.display()
+            ));
+        // macOS renders windowless (OSR): frames composite on the desktop
+        // side above the WKWebView instead of a native child window.
+        #[cfg(target_os = "macos")]
+        command.arg("--hachimi-osr");
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(false)
+            .spawn()
+            .map_err(|error| EmbeddedBrowserError::StartFailed(error.to_string()))?;
         let stdin = child
             .stdin
             .take()
@@ -438,6 +477,10 @@ impl<R: Runtime> EmbeddedBrowserService<R> {
         })
         .await
         .map_err(|_| EmbeddedBrowserError::ReadyTimeout)??;
+        // macOS: capture the workbench window's content view for the OSR
+        // overlay composite (idempotent).
+        #[cfg(target_os = "macos")]
+        self.runtime.overlay.attach(window);
         let settings = self
             .runtime
             .store
@@ -468,6 +511,7 @@ impl<R: Runtime> EmbeddedBrowserService<R> {
         send_runtime_command(&self.runtime, connection, command).await
     }
 
+    #[cfg(not(target_os = "macos"))]
     async fn attach_window(
         &self,
         connection: &Arc<RuntimeConnection>,
@@ -477,6 +521,17 @@ impl<R: Runtime> EmbeddedBrowserService<R> {
             .map_err(|error| EmbeddedBrowserError::StartFailed(error.to_string()))?;
         self.send_on(connection, CefHostCommand::SetParentWindow { parent_hwnd })
             .await?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn attach_window(
+        &self,
+        _connection: &Arc<RuntimeConnection>,
+        _window: &WebviewWindow<R>,
+    ) -> Result<(), EmbeddedBrowserError> {
+        // macOS renders windowless (OSR); the desktop composites CEF frames
+        // above the WKWebView, so there is no native parent window to set.
         Ok(())
     }
 }
@@ -639,6 +694,7 @@ async fn handle_host_event<R: Runtime>(
                             y: 0,
                             width: 1,
                             height: 1,
+                            scale_factor: 1.0,
                         },
                         visible: false,
                     },
@@ -715,6 +771,12 @@ async fn handle_host_event<R: Runtime>(
                     .await;
             }
         }
+        #[cfg(target_os = "macos")]
+        CefHostEvent::FrameReady { tab_id, .. } => {
+            runtime.overlay.frame_ready(&runtime.app, &tab_id);
+        }
+        #[cfg(not(target_os = "macos"))]
+        CefHostEvent::FrameReady { .. } => {}
         CefHostEvent::RenderProcessTerminated { tab_id, status } => {
             tracing::warn!(%tab_id, %status, "CEF browser render process terminated");
         }
@@ -981,6 +1043,31 @@ fn rejected(failure: CefHostFailure) -> EmbeddedBrowserError {
     }
 }
 
+/// macOS OSR overlay input: forwards events from the native overlay views to
+/// the host on the current connection (dropped when the runtime is down or a
+/// restart swapped generations).
+#[cfg(target_os = "macos")]
+async fn send_overlay_input<R: Runtime>(
+    runtime: Arc<EmbeddedBrowserRuntime<R>>,
+    tab_id: BrowserTabId,
+    action: crate::cef_overlay::CefOverlayAction,
+) {
+    let connection = runtime.connection.lock().await.clone();
+    let Some(connection) = connection else {
+        return;
+    };
+    if runtime.active_generation.load(Ordering::Acquire) != connection.generation {
+        return;
+    }
+    let command = match action {
+        crate::cef_overlay::CefOverlayAction::Input(event) => {
+            CefHostCommand::SendInput { tab_id, event }
+        }
+        crate::cef_overlay::CefOverlayAction::Focus => CefHostCommand::Focus { tab_id },
+    };
+    let _ = send_runtime_command(&runtime, &connection, command).await;
+}
+
 fn emit_workspace<R: Runtime>(
     app: &AppHandle<R>,
     workspace: &BrowserWorkspace,
@@ -998,11 +1085,23 @@ fn emit_workspace<R: Runtime>(
     let _ = app.emit(TAB_STATE_CHANGED_EVENT, workspace);
 }
 
+// Host executable location relative to the bundled `cef-runtime/` resource
+// directory and to the development bundle root (target/cef-bundle/).
+#[cfg(not(target_os = "macos"))]
+const HOST_EXECUTABLE_IN_RUNTIME: &str = "cef-runtime/hachimi-cef-host.exe";
+#[cfg(not(target_os = "macos"))]
+const HOST_EXECUTABLE_IN_BUNDLE: &str = "hachimi-cef-host.exe";
+#[cfg(target_os = "macos")]
+const HOST_EXECUTABLE_IN_RUNTIME: &str =
+    "cef-runtime/hachimi-cef-host.app/Contents/MacOS/hachimi-cef-host";
+#[cfg(target_os = "macos")]
+const HOST_EXECUTABLE_IN_BUNDLE: &str = "hachimi-cef-host.app/Contents/MacOS/hachimi-cef-host";
+
 fn resolve_host_executable(resource_dir: &Path) -> PathBuf {
     std::env::var_os("HACHIMI_CEF_HOST")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let bundled = resource_dir.join("cef-runtime/hachimi-cef-host.exe");
+            let bundled = resource_dir.join(HOST_EXECUTABLE_IN_RUNTIME);
             if bundled.is_file() {
                 return bundled;
             }
@@ -1010,16 +1109,18 @@ fn resolve_host_executable(resource_dir: &Path) -> PathBuf {
                 .ok()
                 .and_then(|path| path.parent().map(Path::to_path_buf))
                 .unwrap_or_default()
-                .join("cef-runtime/hachimi-cef-host.exe");
+                .join(HOST_EXECUTABLE_IN_RUNTIME);
             if adjacent.is_file() {
                 return adjacent;
             }
             std::env::current_dir()
                 .unwrap_or_default()
-                .join("target/cef-bundle/hachimi-cef-host.exe")
+                .join("target/cef-bundle")
+                .join(HOST_EXECUTABLE_IN_BUNDLE)
         })
 }
 
+#[cfg(not(target_os = "macos"))]
 fn validate_runtime(executable: &Path) -> Result<(), EmbeddedBrowserError> {
     let directory = executable
         .parent()
@@ -1040,6 +1141,36 @@ fn validate_runtime(executable: &Path) -> Result<(), EmbeddedBrowserError> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn validate_runtime(executable: &Path) -> Result<(), EmbeddedBrowserError> {
+    // executable = hachimi-cef-host.app/Contents/MacOS/hachimi-cef-host
+    let contents = executable
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| EmbeddedBrowserError::RuntimeMissing(executable.display().to_string()))?;
+    let app_root = contents
+        .parent()
+        .ok_or_else(|| EmbeddedBrowserError::RuntimeMissing(contents.display().to_string()))?;
+    let bundle_root = app_root
+        .parent()
+        .ok_or_else(|| EmbeddedBrowserError::RuntimeMissing(app_root.display().to_string()))?;
+    let frameworks = contents.join("Frameworks");
+    for required in [
+        executable.to_path_buf(),
+        contents.join("Info.plist"),
+        frameworks.join("Chromium Embedded Framework.framework/Chromium Embedded Framework"),
+        frameworks.join("hachimi-cef-host Helper.app/Contents/MacOS/hachimi-cef-host Helper"),
+        bundle_root.join("runtime-manifest.json"),
+    ] {
+        if !required.is_file() {
+            return Err(EmbeddedBrowserError::RuntimeMissing(
+                required.display().to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 fn native_window_handle<R: Runtime>(
     window: &WebviewWindow<R>,
@@ -1050,7 +1181,16 @@ fn native_window_handle<R: Runtime>(
     Ok(hwnd.0 as usize)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn native_window_handle<R: Runtime>(
+    _window: &WebviewWindow<R>,
+) -> Result<usize, EmbeddedBrowserError> {
+    // macOS uses CEF windowless (OSR) rendering, so no NSView pointer is
+    // handed to the host; the desktop side composites frames itself.
+    Ok(0)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn native_window_handle<R: Runtime>(
     _window: &WebviewWindow<R>,
 ) -> Result<usize, EmbeddedBrowserError> {

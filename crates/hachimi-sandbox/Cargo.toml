@@ -37,6 +37,9 @@ windows-sys = { workspace = true, features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 [[bin]]
 name = "hachimi-sandbox-launcher"
 path = "src/bin/hachimi-sandbox-launcher.rs"

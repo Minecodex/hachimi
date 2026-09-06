@@ -28,6 +28,7 @@ members = [
   "crates/hachimi-scheduler",
   "crates/hachimi-skills",
   "crates/hachimi-storage",
+  "crates/hachimi-system-runtime",
   "crates/hachimi-user-input",
   "crates/hachimi-voice",
   "crates/hachimi-windowing",
@@ -99,6 +100,18 @@ windows = { version = "=0.62.2" }
 windows-capture = "=2.0.0"
 libc = "=0.2.189"
 portable-pty = "=0.9.0"
+semver = "=1.0.28"
+tao = "=0.35.3"
+wry = "=0.55.1"
+raw-window-handle = "=0.6.2"
+objc2 = "=0.6.4"
+objc2-foundation = "=0.3.2"
+objc2-app-kit = "=0.3.2"
+objc2-core-graphics = "=0.3.2"
+objc2-screen-capture-kit = "=0.3.2"
+block2 = "=0.6.2"
+core-graphics = { version = "=0.25.0", features = ["highsierra"] }
+core-foundation = "=0.10.1"
 
 hachimi-agent = { path = "crates/hachimi-agent" }
 hachimi-approvals = { path = "crates/hachimi-approvals" }
@@ -125,6 +138,7 @@ hachimi-sandbox = { path = "crates/hachimi-sandbox" }
 hachimi-scheduler = { path = "crates/hachimi-scheduler" }
 hachimi-skills = { path = "crates/hachimi-skills" }
 hachimi-storage = { path = "crates/hachimi-storage" }
+hachimi-system-runtime = { path = "crates/hachimi-system-runtime" }
 hachimi-user-input = { path = "crates/hachimi-user-input" }
 hachimi-voice = { path = "crates/hachimi-voice" }
 hachimi-windowing = { path = "crates/hachimi-windowing" }

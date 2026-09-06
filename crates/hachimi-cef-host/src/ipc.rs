@@ -44,7 +44,12 @@ impl EventSink {
     }
 }
 
-pub fn run_command_loop(manager: TabManager, sink: &EventSink) -> bool {
+pub fn run_command_loop(
+    manager: TabManager,
+    sink: &EventSink,
+    quit_signal: Arc<std::sync::atomic::AtomicBool>,
+) -> bool {
+    let mut shutdown = false;
     for line in io::stdin().lock().lines() {
         let line = match line {
             Ok(line) if !line.trim().is_empty() => line,
@@ -75,11 +80,16 @@ pub fn run_command_loop(manager: TabManager, sink: &EventSink) -> bool {
             );
             continue;
         }
-        let shutdown = matches!(envelope.command, hachimi_browser::CefHostCommand::Shutdown);
+        shutdown = matches!(envelope.command, hachimi_browser::CefHostCommand::Shutdown);
         manager.dispatch(envelope);
         if shutdown {
-            return true;
+            break;
         }
     }
-    false
+    crate::bootstrap_trace::record("cef_command_loop_ended");
+    // macOS drives the CEF message loop manually with do_message_loop_work on
+    // the main thread (quit_message_loop does not stop run_message_loop
+    // reliably without an NSApplication), so it waits on this flag.
+    quit_signal.store(true, std::sync::atomic::Ordering::Release);
+    shutdown
 }

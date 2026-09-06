@@ -4,6 +4,21 @@ use hachimi_protocol::{DiffScope, FsSearchId, SessionId};
 use hachimi_workspace::{WorkspaceHostClient, WorkspaceOperation, WorkspaceOutput};
 use tokio_util::sync::CancellationToken;
 
+async fn test_git_lease() -> hachimi_system_runtime::GitRuntimeLease {
+    static LEASE: tokio::sync::OnceCell<hachimi_system_runtime::GitRuntimeLease> =
+        tokio::sync::OnceCell::const_new();
+    LEASE
+        .get_or_init(|| async {
+            let manager = hachimi_system_runtime::SystemRuntimeManager::new();
+            manager.refresh().await;
+            manager
+                .require_git(hachimi_protocol::SystemToolCapability::GitLocalMutation)
+                .expect("capability-verified system Git")
+        })
+        .await
+        .clone()
+}
+
 #[cfg(windows)]
 use hachimi_agent::{
     AuthorizedToolContext, ToolCall, ToolInvocation, ToolResultStatus, authorized_tool,
@@ -197,8 +212,9 @@ async fn restricted_workspace_worker_executes_a_checkout_bound_write() {
     let run_id = RunId::random();
     let checkout_id = CheckoutId::random();
     let mut client = WorkspaceHostClient::new(&worker, directory.path(), checkout_id.as_str(), 1);
-    let read_only_roots = prepare_workspace_acl(directory.path(), client.run_temp_dir(), &worker)
-        .expect("workspace ACL");
+    let read_only_roots =
+        prepare_workspace_acl(directory.path(), client.run_temp_dir(), &worker, None)
+            .expect("workspace ACL");
     attest_workspace_boundaries(
         &launcher,
         &canary,
@@ -241,6 +257,7 @@ async fn restricted_workspace_worker_executes_a_checkout_bound_write() {
             session_id,
             run_id,
             grants,
+            git_metadata_writable: false,
         },
         Arc::new(AllowReleaseSmokeLaunch),
     );
@@ -287,8 +304,10 @@ async fn restricted_workspace_worker_creates_an_empty_initial_commit_without_tou
     );
 
     let directory = tempfile::tempdir().expect("unborn Git checkout");
+    let git_lease = test_git_lease().await;
+    let git_program = git_lease.executable().to_path_buf();
     let git = |args: &[&str]| {
-        let output = std::process::Command::new("git")
+        let output = std::process::Command::new(&git_program)
             .args(args)
             .current_dir(directory.path())
             .env("GIT_OPTIONAL_LOCKS", "0")
@@ -314,9 +333,20 @@ async fn restricted_workspace_worker_creates_an_empty_initial_commit_without_tou
     let session_id = SessionId::random();
     let run_id = RunId::random();
     let checkout_id = CheckoutId::random();
-    let mut client = WorkspaceHostClient::new(&worker, directory.path(), checkout_id.as_str(), 1);
-    let read_only_roots = prepare_workspace_acl(directory.path(), client.run_temp_dir(), &worker)
-        .expect("workspace ACL");
+    let mut client = WorkspaceHostClient::new_with_git_runtime(
+        &worker,
+        directory.path(),
+        checkout_id.as_str(),
+        1,
+        Some(git_lease),
+    );
+    let read_only_roots = prepare_workspace_acl(
+        directory.path(),
+        client.run_temp_dir(),
+        &worker,
+        Some(&git_program),
+    )
+    .expect("workspace ACL");
     attest_workspace_boundaries(
         &launcher,
         &canary,
@@ -326,7 +356,8 @@ async fn restricted_workspace_worker_creates_an_empty_initial_commit_without_tou
         &read_only_roots,
     )
     .expect("workspace boundary attestation");
-    let mutation_acl = prepare_git_mutation_acl(directory.path()).expect("temporary Git write ACL");
+    let mutation_acl =
+        prepare_git_mutation_acl(directory.path(), &git_program).expect("temporary Git write ACL");
     let root = directory.path().to_string_lossy().into_owned();
     let temp = client.run_temp_dir().to_string_lossy().into_owned();
     let grants = CapabilityGrantSet {
@@ -360,6 +391,7 @@ async fn restricted_workspace_worker_creates_an_empty_initial_commit_without_tou
             session_id,
             run_id,
             grants,
+            git_metadata_writable: false,
         },
         Arc::new(AllowReleaseSmokeLaunch),
     );
@@ -424,7 +456,8 @@ async fn restricted_agent_exec_tool_runs_through_policy_and_workspace_sandbox() 
     let run_id = RunId::random();
     let checkout_id = CheckoutId::random();
     let mut client = WorkspaceHostClient::new(&worker, directory.path(), checkout_id.as_str(), 1);
-    prepare_workspace_acl(directory.path(), client.run_temp_dir(), &worker).expect("workspace ACL");
+    prepare_workspace_acl(directory.path(), client.run_temp_dir(), &worker, None)
+        .expect("workspace ACL");
     let root = directory.path().to_string_lossy().into_owned();
     let temp = client.run_temp_dir().to_string_lossy().into_owned();
     let grants = CapabilityGrantSet {
@@ -461,6 +494,7 @@ async fn restricted_agent_exec_tool_runs_through_policy_and_workspace_sandbox() 
             session_id: session_id.clone(),
             run_id: run_id.clone(),
             grants: grants.clone(),
+            git_metadata_writable: false,
         },
         Arc::new(AllowReleaseSmokeLaunch),
     );
@@ -658,11 +692,12 @@ async fn structured_diff_is_returned_per_file() {
     git(directory.path(), &["add", "demo.txt"]);
     git(directory.path(), &["commit", "-m", "initial"]);
     std::fs::write(directory.path().join("demo.txt"), "after\n").expect("change");
-    let client = WorkspaceHostClient::new(
+    let client = WorkspaceHostClient::new_with_git_runtime(
         env!("CARGO_BIN_EXE_hachimi-workspace-worker"),
         directory.path(),
         "checkout-diff",
         1,
+        Some(test_git_lease().await),
     );
     let output = client
         .execute(
@@ -700,11 +735,12 @@ async fn git_workspace_snapshot_is_safe_through_the_worker_process() {
     git(directory.path(), &["commit", "-m", "initial"]);
     std::fs::write(directory.path().join("untracked.txt"), "untracked\n").expect("seed untracked");
 
-    let client = WorkspaceHostClient::new(
+    let client = WorkspaceHostClient::new_with_git_runtime(
         env!("CARGO_BIN_EXE_hachimi-workspace-worker"),
         directory.path(),
         "checkout-git-snapshot",
         5,
+        Some(test_git_lease().await),
     );
     let output = client
         .execute(
@@ -755,11 +791,12 @@ async fn repository_textconv_cannot_execute_during_read_only_diff() {
     git(directory.path(), &["commit", "-m", "initial"]);
     std::fs::write(directory.path().join("demo.txt"), "after\n").expect("change");
 
-    let client = WorkspaceHostClient::new(
+    let client = WorkspaceHostClient::new_with_git_runtime(
         env!("CARGO_BIN_EXE_hachimi-workspace-worker"),
         directory.path(),
         "checkout-no-textconv",
         13,
+        Some(test_git_lease().await),
     );
     let scope = DiffScope::Checkout {
         checkout_id: hachimi_protocol::CheckoutId::new("checkout-no-textconv"),
@@ -840,11 +877,12 @@ async fn checkout_diff_file_is_streamed_in_etagged_chunks() {
     git(directory.path(), &["add", "demo.txt"]);
     git(directory.path(), &["commit", "-m", "initial"]);
     std::fs::write(directory.path().join("demo.txt"), "after\n").expect("change");
-    let client = WorkspaceHostClient::new(
+    let client = WorkspaceHostClient::new_with_git_runtime(
         env!("CARGO_BIN_EXE_hachimi-workspace-worker"),
         directory.path(),
         "checkout-diff-chunk",
         7,
+        Some(test_git_lease().await),
     );
     let scope = DiffScope::Checkout {
         checkout_id: hachimi_protocol::CheckoutId::new("checkout-diff-chunk"),
@@ -899,4 +937,159 @@ fn git(root: &std::path::Path, args: &[&str]) {
         .status()
         .expect("git");
     assert!(status.success(), "git command failed: {args:?}");
+}
+
+// ---- macOS Seatbelt restricted-execution smoke (runs locally, no fixture env) ----
+
+#[cfg(target_os = "macos")]
+mod macos_seatbelt {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use hachimi_protocol::{
+        CapabilityGrantSet, CheckoutId, FileSystemAccess, FileSystemGrant, NetworkGrant,
+        PermissionGrantScope, PermissionProfile, ProcessGrant, RunId, SessionId,
+    };
+    use hachimi_sandbox::{
+        SandboxBackend, SandboxStatus, attest_workspace_boundaries, install_macos_marker,
+        platform_probe, prepare_workspace_acl,
+    };
+    use hachimi_workspace::{
+        WorkspaceHostClient, WorkspaceLaunchCheck, WorkspaceLaunchGuard,
+        WorkspaceLaunchValidationFuture, WorkspaceOperation, WorkspaceOutput,
+        WorkspaceSandboxContext,
+    };
+    use sha2::{Digest, Sha256};
+    use tokio_util::sync::CancellationToken;
+
+    struct AllowSeatbeltSmokeLaunch;
+
+    impl WorkspaceLaunchGuard for AllowSeatbeltSmokeLaunch {
+        fn validate(&self, _check: WorkspaceLaunchCheck) -> WorkspaceLaunchValidationFuture {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn sha256(path: &std::path::Path) -> String {
+        Sha256::digest(std::fs::read(path).expect("canary bytes"))
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    fn canary_path() -> std::path::PathBuf {
+        // The canary ships beside the workspace worker in target/<profile>;
+        // `corepack pnpm sidecars:prepare` stages both.
+        let canary = std::path::PathBuf::from(env!("CARGO_BIN_EXE_hachimi-workspace-worker"))
+            .parent()
+            .expect("worker directory")
+            .join("hachimi-sandbox-canary");
+        assert!(
+            canary.is_file(),
+            "sandbox canary is missing beside the workspace worker ({}); run `corepack pnpm sidecars:prepare`",
+            canary.display()
+        );
+        canary
+    }
+
+    fn enforced_backend(data: &std::path::Path) -> Arc<dyn SandboxBackend> {
+        let marker = data.join("sandbox/macos-seatbelt/setup.json");
+        install_macos_marker(&marker).expect("macOS marker");
+        let canary = canary_path();
+        let probe = platform_probe(marker)
+            .with_runtime(
+                std::path::PathBuf::new(),
+                &canary,
+                data.join("sandbox/attestation"),
+            )
+            .with_runtime_integrity(vec![(canary.clone(), sha256(&canary))]);
+        let backend: Arc<dyn SandboxBackend> = Arc::new(probe);
+        assert_eq!(
+            SandboxStatus::from_report(&backend.capability_report()),
+            SandboxStatus::Enforced,
+            "seatbelt attestation must reach Enforced"
+        );
+        backend
+    }
+
+    #[tokio::test]
+    async fn restricted_workspace_worker_executes_a_checkout_bound_write() {
+        let data = tempfile::tempdir().expect("data root");
+        let backend = enforced_backend(data.path());
+
+        let directory = tempfile::tempdir().expect("checkout");
+        let worker = std::path::PathBuf::from(env!("CARGO_BIN_EXE_hachimi-workspace-worker"));
+        let canary = canary_path();
+        let session_id = SessionId::random();
+        let run_id = RunId::random();
+        let checkout_id = CheckoutId::random();
+        let mut client =
+            WorkspaceHostClient::new(&worker, directory.path(), checkout_id.as_str(), 1);
+        let read_only_roots =
+            prepare_workspace_acl(directory.path(), client.run_temp_dir(), &worker, None)
+                .expect("workspace ACL");
+        attest_workspace_boundaries(
+            std::path::Path::new("unused-on-macos"),
+            &canary,
+            directory.path(),
+            client.run_temp_dir(),
+            &worker,
+            &read_only_roots,
+        )
+        .expect("workspace boundary attestation");
+        let root = directory.path().to_string_lossy().into_owned();
+        let temp = client.run_temp_dir().to_string_lossy().into_owned();
+        let grants = CapabilityGrantSet {
+            profile: PermissionProfile::Writable,
+            scope: PermissionGrantScope::Run,
+            session_id: session_id.clone(),
+            run_id: Some(run_id.clone()),
+            source: "macos_seatbelt_smoke".into(),
+            file_system: vec![FileSystemGrant {
+                access: FileSystemAccess::Write,
+                roots: vec![root, temp],
+                globs: Vec::new(),
+                files: Vec::new(),
+                special_roots: Vec::new(),
+            }],
+            network: NetworkGrant::default(),
+            process: ProcessGrant {
+                spawn: true,
+                interactive: false,
+                unrestricted_commands: false,
+                allowed_commands: vec![worker.to_string_lossy().into_owned()],
+            },
+            browser: Default::default(),
+            computer: Default::default(),
+            review_each_command: false,
+            expires_at_ms: None,
+        };
+        client = client.with_sandbox(
+            backend,
+            WorkspaceSandboxContext {
+                session_id,
+                run_id,
+                grants,
+                git_metadata_writable: false,
+            },
+            Arc::new(AllowSeatbeltSmokeLaunch),
+        );
+        let output = client
+            .execute(
+                WorkspaceOperation::WriteFile {
+                    path: "restricted.txt".into(),
+                    content: "restricted worker".into(),
+                    expected_sha256: None,
+                },
+                Duration::from_secs(20),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("restricted write");
+        assert!(matches!(output, WorkspaceOutput::Write { .. }));
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("restricted.txt")).expect("written file"),
+            "restricted worker"
+        );
+    }
 }

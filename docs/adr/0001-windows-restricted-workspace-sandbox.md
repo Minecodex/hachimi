@@ -64,12 +64,26 @@ Codex product prompts.
 ## Amendment 2026-08-22: pinned MinGit removed in favor of system Git
 
 The per-user Runtime no longer stages a pinned MinGit distribution, and the managed-Git SHA-256
-manifest attestation is removed. Git operations resolve the system Git installation (>= 2.40) from
-fixed well-known locations before PATH, matching openai/codex `codex-rs/git-utils` @
-`4f39251a010a8bd7d692d25fb33832ff06f1635a`. The contract that restricted Workers receive an explicit
-absolute Git path and never resolve Git from their checkout directory is unchanged, as is the
-config-level hardening (disabled `core.hooksPath`, `GIT_OPTIONAL_LOCKS=0`, allowlisted environment).
-Rationale: the pinned binary and hash manifest only defended against tampering that requires
-administrator rights, and an administrator already owns the machine; the lookup-attack vector is
-closed by explicit-path injection. This also unblocks the macOS port (`docs/mac-plan/`), which has
-no MinGit equivalent.
+manifest attestation is removed. The original fixed-location/version-floor resolver introduced by
+this amendment is superseded by ADR-0006: Git is now discovered from a sanitized host-environment
+snapshot and platform candidates, accepted by isolated capability probes, and bound to Workers by
+a revisioned absolute-path/file-identity lease. The contract that restricted Workers never resolve
+Git from their checkout directory is unchanged, as is the config-level hardening (disabled
+`core.hooksPath`, `GIT_OPTIONAL_LOCKS=0`, allowlisted environment).
+
+## Amendment 2026-08-23: macOS Seatbelt backend
+
+macOS gains an enforced backend alongside Windows: `/usr/bin/sandbox-exec` with a grant-derived
+SBPL profile per launch (deny-default base, subpath-parameterized read/write roots, read-only `.git`
+carve-outs inside writable roots, anchor `file-write-unlink` denies, deny-all networking, and a
+pseudo-TTY allowance for interactive terminals). There is no per-user installation, AppContainer
+profile, or ACL pass on macOS; readiness is proven by live canary attestation (deny-default probe,
+fd-inheritance probe, granted write, forbidden write/read denials, deny-all network, and
+process-group teardown of a grandchild). Process-tree teardown uses the launch process group
+(`killpg`) instead of a kill-on-close Job Object; a malicious worker that detaches its own process
+group can outlive teardown — that residue gap is accepted for this backend and recorded here. Git
+metadata stays read-only by default and is lifted per launch only while a verified mutation lease is
+held, replacing the Windows temporary-ACL upgrade. Current policy version
+`hachimi-macos-seatbelt-v2`; the system-runtime separation is specified in ADR-0006.
+Reference: openai/codex `codex-rs/sandboxing` @ `4f39251a010a8bd7d692d25fb33832ff06f1635a`
+(snapshots under `docs/references/openai/raw/OAI-PRODUCT-CODEX-SEATBELT-20260823-*`).

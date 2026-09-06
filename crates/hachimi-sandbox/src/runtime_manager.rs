@@ -18,10 +18,7 @@ use hachimi_protocol::{
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    SandboxBackend, SandboxError, SandboxLaunchSpec, SandboxSpawnFuture, SandboxStatus,
-    WindowsSandboxReadinessProbe,
-};
+use crate::{SandboxBackend, SandboxError, SandboxLaunchSpec, SandboxSpawnFuture, SandboxStatus};
 
 #[derive(Debug, Clone)]
 pub struct SandboxManagerError {
@@ -45,7 +42,7 @@ struct RuntimeState {
 }
 
 pub struct SandboxRuntimeManager {
-    probe: Arc<WindowsSandboxReadinessProbe>,
+    probe: Arc<dyn SandboxBackend>,
     setup_helper: PathBuf,
     setup_marker: PathBuf,
     launcher: PathBuf,
@@ -68,7 +65,7 @@ impl std::fmt::Debug for SandboxRuntimeManager {
 impl SandboxRuntimeManager {
     #[must_use]
     pub fn new(
-        probe: Arc<WindowsSandboxReadinessProbe>,
+        probe: Arc<dyn SandboxBackend>,
         setup_helper: impl Into<PathBuf>,
         setup_marker: impl Into<PathBuf>,
         launcher: impl Into<PathBuf>,
@@ -78,7 +75,7 @@ impl SandboxRuntimeManager {
 
     #[must_use]
     pub fn new_with_report(
-        probe: Arc<WindowsSandboxReadinessProbe>,
+        probe: Arc<dyn SandboxBackend>,
         setup_helper: impl Into<PathBuf>,
         setup_marker: impl Into<PathBuf>,
         launcher: impl Into<PathBuf>,
@@ -201,7 +198,7 @@ impl SandboxRuntimeManager {
         let marker = self.setup_marker.clone();
         let launcher = self.launcher.clone();
         let repair_result =
-            tokio::task::spawn_blocking(move || run_per_user_setup(&helper, &marker, &launcher))
+            tokio::task::spawn_blocking(move || perform_repair_setup(&helper, &marker, &launcher))
                 .await
                 .map_err(|error| SandboxManagerError {
                     code: "sandbox_repair_task_failed",
@@ -319,15 +316,40 @@ fn run_per_user_setup(
     Ok(())
 }
 
-#[cfg(not(windows))]
-fn run_per_user_setup(
+#[cfg(windows)]
+fn perform_repair_setup(
+    helper: &Path,
+    marker: &Path,
+    launcher: &Path,
+) -> Result<(), SandboxManagerError> {
+    run_per_user_setup(helper, marker, launcher)
+}
+
+/// macOS Seatbelt needs no per-user OS setup: repair records the policy marker
+/// and lets the next probe re-run live attestation.
+#[cfg(target_os = "macos")]
+fn perform_repair_setup(
+    _helper: &Path,
+    marker: &Path,
+    _launcher: &Path,
+) -> Result<(), SandboxManagerError> {
+    crate::install_macos_marker(marker)
+        .map(|_| ())
+        .map_err(|error| SandboxManagerError {
+            code: "sandbox_setup_marker_failed",
+            message: error,
+        })
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn perform_repair_setup(
     _helper: &Path,
     _marker: &Path,
     _launcher: &Path,
 ) -> Result<(), SandboxManagerError> {
     Err(SandboxManagerError {
         code: "sandbox_repair_unsupported_os",
-        message: "Windows sandbox repair is only supported on Windows".into(),
+        message: "sandbox repair is only supported on Windows and macOS".into(),
     })
 }
 

@@ -1062,7 +1062,7 @@ export type RunUsageSnapshot = { runId: RunId, billedUsage: TokenUsage, activeCo
 
 export type RuntimeComponentHealth = { component: RuntimeComponentId, state: RuntimeComponentState, errorCode: string | null, retryable: boolean, attempt: number, nextRetryAtMs: number | null, updatedAtMs: number, };
 
-export type RuntimeComponentId = "gateway" | "internal_resources" | "mcp" | "scheduler" | "browser_extension" | "cef" | "computer_use";
+export type RuntimeComponentId = "gateway" | "internal_resources" | "system_tools" | "mcp" | "scheduler" | "browser_extension" | "cef" | "computer_use";
 
 export type RuntimeComponentState = "starting" | "ready" | "retrying" | "degraded" | "failed";
 
@@ -1172,6 +1172,10 @@ export type SessionSourceOrigin = "upload" | "browser" | "mcp" | "connector";
 
 export type SessionSourceRecord = { id: SessionSourceId, sessionId: SessionId, runId: RunId | null, kind: SessionSourceKind, origin: SessionSourceOrigin, attachmentId: AttachmentId | null, url: string | null, title: string | null, browserTabId: BrowserTabId | null, createdAtMs: number, lastUsedAtMs: number, };
 
+export type ShellKind = "posix" | "power_shell" | "command_prompt";
+
+export type ShellLaunchSpec = { executablePath: string, kind: ShellKind, interactiveArgs: string[], commandArgs: string[], runtimeRevision: number, };
+
 export type SideEffectExecutionId = string;
 
 export type SideEffectExecutionRecord = { id: SideEffectExecutionId, sessionId: SessionId, runId: RunId, runGeneration: number, toolCallId: ToolCallId, idempotencyKey: string, parameterHash: string, approvalId: ApprovalId | null, hostRequestId: string | null, status: SideEffectExecutionStatus, resultCode: string | null, resultReference: ArtifactId | null, createdAtMs: number, updatedAtMs: number, };
@@ -1251,6 +1255,18 @@ export type StructuredOutputMode = "auto" | "enabled" | "disabled";
 export type SystemBrowserInstallation = { kind: SystemBrowserKind, executablePath: string, version: string | null, supported: boolean, extensionStoreUrl: string | null, };
 
 export type SystemBrowserKind = "chrome" | "edge";
+
+export type SystemRuntimeSnapshot = { revision: number, tools: SystemToolStatus[], warnings: string[], };
+
+export type SystemToolCapability = "git_inspect" | "git_local_mutation" | "git_worktree" | "shell_command" | "shell_interactive";
+
+export type SystemToolId = "git" | "default_shell";
+
+export type SystemToolSource = "shell_snapshot" | "process_environment" | "os_registry" | "well_known" | "test_override";
+
+export type SystemToolState = "ready" | "degraded" | "unavailable";
+
+export type SystemToolStatus = { tool: SystemToolId, state: SystemToolState, executablePath: string | null, version: string | null, source: SystemToolSource | null, capabilities: SystemToolCapability[], errorCode: string | null, observedAtMs: number, };
 
 export type TaskInteractiveContinuation = { taskRun: TaskRunRecord, session: SessionRecord, run: RunRecord, };
 

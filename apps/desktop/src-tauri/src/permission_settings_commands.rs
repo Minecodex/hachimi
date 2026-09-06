@@ -155,7 +155,8 @@ fn is_supported_command(path: &Path) -> bool {
 fn is_internal_sidecar(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name.starts_with("hachimi-sandbox-")
-        || name == "hachimi-cef-host"
+        // Exact on Windows; macOS helper apps are "hachimi-cef-host Helper…".
+        || name.starts_with("hachimi-cef-host")
         || name == "hachimi-gateway"
         || name.starts_with("hachimi-channel-sidecar-")
         || name.starts_with("hachimi-connector-sidecar-")
@@ -170,6 +171,7 @@ mod tests {
     fn internal_service_sidecars_are_not_user_command_candidates() {
         assert!(is_internal_sidecar("hachimi-sandbox-launcher"));
         assert!(is_internal_sidecar("Hachimi-CEF-Host"));
+        assert!(is_internal_sidecar("hachimi-cef-host Helper (GPU)"));
         assert!(is_internal_sidecar("hachimi-gateway"));
         assert!(is_internal_sidecar("hachimi-channel-sidecar-slack"));
         assert!(!is_internal_sidecar("git"));

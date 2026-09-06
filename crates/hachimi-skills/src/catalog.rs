@@ -954,6 +954,39 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn polling_watcher_reports_external_skill_updates() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = AgentStore::connect_in_memory().await.expect("store");
+        let host = SkillHost::new(temp.path().join("user"), store).expect("host");
+        let repo = temp.path().join("repo");
+        let repo_skills = repo.join(".agents/skills");
+        write_skill(&repo_skills, "watch-repo", "watch-repo");
+        let mut watch = host.watch_changes().expect("watch");
+        host.list_for_context(&SkillCatalogContext {
+            project_root: Some(repo),
+            checkout_root: None,
+        })
+        .await
+        .expect("register Repo context");
+
+        tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+        fs::write(
+            repo_skills.join("watch-repo/SKILL.md"),
+            "---\nname: watch-repo\ndescription: changed\n---\n",
+        )
+        .expect("external Repo Skill update");
+        let changed = tokio::time::timeout(std::time::Duration::from_secs(5), watch.recv())
+            .await
+            .expect("watch timeout")
+            .expect("watch channel");
+        assert_eq!(
+            changed,
+            [fs::canonicalize(repo_skills).expect("canonical root")]
+        );
+    }
+
     #[test]
     fn invalid_mcp_dependency_is_diagnostic_not_authorization() {
         let parsed = parse_dependency_yaml_subset(

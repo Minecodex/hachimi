@@ -3,6 +3,7 @@ import {
   FolderOpen,
   MoreHorizontal,
   PanelLeftClose,
+  RefreshCw,
   SlidersHorizontal,
   TerminalSquare,
 } from "@hachimi/ui";
@@ -16,9 +17,12 @@ export function WorkbenchToolbar(props: {
   summaryPinned: boolean;
   bottomPanelOpen: boolean;
   sidebarVisible: boolean;
+  terminalReady?: boolean;
+  terminalReason?: string | undefined;
   onOpenLocation: () => void;
   onToggleSummary: () => void;
   onToggleBottomPanel: () => void;
+  onRefreshSystemRuntime?: () => void;
   onToggleSidebar: () => void;
 }) {
   const zh = () => props.locale === "zh-CN";
@@ -65,13 +69,30 @@ export function WorkbenchToolbar(props: {
           data-testid="workbench-toggle-bottom-panel"
           class="workbench-toolbar-icon"
           classList={{ active: props.bottomPanelOpen }}
-          disabled={!props.hasProject}
-          title={zh() ? "切换终端" : "Toggle terminal"}
+          disabled={!props.hasProject || props.terminalReady === false}
+          title={
+            props.terminalReady === false
+              ? `${zh() ? "默认 Shell 不可用" : "Default shell unavailable"}: ${props.terminalReason ?? "system_shell_missing"}`
+              : zh()
+                ? "切换终端"
+                : "Toggle terminal"
+          }
           aria-label={zh() ? "切换终端" : "Toggle terminal"}
           onClick={props.onToggleBottomPanel}
         >
           <TerminalSquare size={16} />
         </Button>
+        <Show when={props.hasProject && props.terminalReady === false}>
+          <Button
+            data-testid="workbench-refresh-system-runtime"
+            class="workbench-toolbar-icon"
+            title={zh() ? "重新检测系统工具" : "Detect system tools again"}
+            aria-label={zh() ? "重新检测系统工具" : "Detect system tools again"}
+            onClick={props.onRefreshSystemRuntime}
+          >
+            <RefreshCw size={16} />
+          </Button>
+        </Show>
         <Button
           data-testid="workbench-toggle-inspector"
           class="workbench-toolbar-icon"

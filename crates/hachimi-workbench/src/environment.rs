@@ -9,6 +9,7 @@ use hachimi_protocol::{
     GitRefRecord, GitRemoteRecord, PlanConfirmationStatus, PlanStepStatus, SessionContextBinding,
     SessionId, WorkbenchEnvironmentSnapshot,
 };
+use hachimi_system_runtime::SystemRuntimeManager;
 use sha2::{Digest, Sha256};
 
 use crate::{WorkbenchError, WorkbenchService, git_optional, git_required, now_ms};
@@ -123,7 +124,8 @@ impl WorkbenchService {
                 )
             }
         };
-        let (changes, git) = git_environment(&root, baseline_revision.as_deref()).await?;
+        let (changes, git) =
+            git_environment(&self.system_runtime, &root, baseline_revision.as_deref()).await?;
         let browser_lease = self
             .store
             .active_browser_automation_lease_for_session(session_id)
@@ -259,10 +261,11 @@ impl WorkbenchService {
 }
 
 async fn git_environment(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     baseline: Option<&str>,
 ) -> Result<(EnvironmentChangeSummary, EnvironmentGitSummary), WorkbenchError> {
-    let inside_work_tree = git_optional(root, &["rev-parse", "--is-inside-work-tree"])
+    let inside_work_tree = git_optional(runtime, root, &["rev-parse", "--is-inside-work-tree"])
         .await?
         .is_some_and(|value| value == "true");
     if !inside_work_tree {
@@ -283,12 +286,17 @@ async fn git_environment(
             },
         ));
     }
-    let head = git_optional(root, &["rev-parse", "HEAD"]).await?;
-    let branch = git_optional(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
-        .await?
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty());
+    let head = git_optional(runtime, root, &["rev-parse", "HEAD"]).await?;
+    let branch = git_optional(
+        runtime,
+        root,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+    )
+    .await?
+    .map(|value| value.trim().to_owned())
+    .filter(|value| !value.is_empty());
     let status = git_required(
+        runtime,
         root,
         &[
             "status",
@@ -300,17 +308,18 @@ async fn git_environment(
         None,
     )
     .await?;
-    let refs = git_refs(root, branch.as_deref()).await?;
-    let remotes = git_remotes(root).await?;
-    let upstream = git_optional(root, &["rev-parse", "--abbrev-ref", "@{upstream}"])
+    let refs = git_refs(runtime, root, branch.as_deref()).await?;
+    let remotes = git_remotes(runtime, root).await?;
+    let upstream = git_optional(runtime, root, &["rev-parse", "--abbrev-ref", "@{upstream}"])
         .await?
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
-    let (ahead, behind) = ahead_behind(root, upstream.as_deref()).await?;
-    let default_comparison_ref = default_comparison_ref(root, branch.as_deref(), &refs).await?;
+    let (ahead, behind) = ahead_behind(runtime, root, upstream.as_deref()).await?;
+    let default_comparison_ref =
+        default_comparison_ref(runtime, root, branch.as_deref(), &refs).await?;
     let detached = branch.is_none();
     Ok((
-        change_summary(root, baseline).await?,
+        change_summary(runtime, root, baseline).await?,
         EnvironmentGitSummary {
             branch,
             head_sha: head,
@@ -328,6 +337,7 @@ async fn git_environment(
 }
 
 async fn change_summary(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     baseline: Option<&str>,
 ) -> Result<EnvironmentChangeSummary, WorkbenchError> {
@@ -337,7 +347,7 @@ async fn change_summary(
         args.push(value);
     }
     args.push("--");
-    let numstat = git_required(root, &args, None).await?;
+    let numstat = git_required(runtime, root, &args, None).await?;
     let mut paths = BTreeSet::new();
     let mut additions = 0_u64;
     let mut deletions = 0_u64;
@@ -359,6 +369,7 @@ async fn change_summary(
         paths.insert(path.to_owned());
     }
     let untracked = git_required(
+        runtime,
         root,
         &["ls-files", "--others", "--exclude-standard", "-z"],
         None,
@@ -391,8 +402,13 @@ async fn change_summary(
     })
 }
 
-async fn git_refs(root: &Path, current: Option<&str>) -> Result<Vec<GitRefRecord>, WorkbenchError> {
+async fn git_refs(
+    runtime: &SystemRuntimeManager,
+    root: &Path,
+    current: Option<&str>,
+) -> Result<Vec<GitRefRecord>, WorkbenchError> {
     let output = git_required(
+        runtime,
         root,
         &[
             "for-each-ref",
@@ -423,15 +439,18 @@ async fn git_refs(root: &Path, current: Option<&str>) -> Result<Vec<GitRefRecord
     Ok(refs)
 }
 
-async fn git_remotes(root: &Path) -> Result<Vec<GitRemoteRecord>, WorkbenchError> {
-    let names = git_required(root, &["remote"], None).await?;
+async fn git_remotes(
+    runtime: &SystemRuntimeManager,
+    root: &Path,
+) -> Result<Vec<GitRemoteRecord>, WorkbenchError> {
+    let names = git_required(runtime, root, &["remote"], None).await?;
     let mut remotes = Vec::new();
     for name in names
         .lines()
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        let Some(url) = git_optional(root, &["remote", "get-url", name]).await? else {
+        let Some(url) = git_optional(runtime, root, &["remote", "get-url", name]).await? else {
             continue;
         };
         let url = url.trim();
@@ -445,11 +464,16 @@ async fn git_remotes(root: &Path) -> Result<Vec<GitRemoteRecord>, WorkbenchError
     Ok(remotes)
 }
 
-async fn ahead_behind(root: &Path, upstream: Option<&str>) -> Result<(u32, u32), WorkbenchError> {
+async fn ahead_behind(
+    runtime: &SystemRuntimeManager,
+    root: &Path,
+    upstream: Option<&str>,
+) -> Result<(u32, u32), WorkbenchError> {
     let Some(upstream) = upstream else {
         return Ok((0, 0));
     };
     let output = git_required(
+        runtime,
         root,
         &[
             "rev-list",
@@ -474,12 +498,17 @@ async fn ahead_behind(root: &Path, upstream: Option<&str>) -> Result<(u32, u32),
 }
 
 async fn default_comparison_ref(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     current: Option<&str>,
     refs: &[GitRefRecord],
 ) -> Result<Option<String>, WorkbenchError> {
-    for remote in git_required(root, &["remote"], None).await?.lines() {
+    for remote in git_required(runtime, root, &["remote"], None)
+        .await?
+        .lines()
+    {
         if let Some(reference) = git_optional(
+            runtime,
             root,
             &[
                 "symbolic-ref",
@@ -626,7 +655,12 @@ mod tests {
         let store = AgentStore::connect_in_memory().await.expect("store");
         let worktrees = tempfile::tempdir().expect("worktrees");
         let attachments = tempfile::tempdir().expect("attachments");
-        let service = WorkbenchService::new(store, worktrees.path(), attachments.path());
+        let service = WorkbenchService::new(
+            store,
+            worktrees.path(),
+            attachments.path(),
+            SystemRuntimeManager::new(),
+        );
         let project = service
             .add_project(repository.path())
             .await

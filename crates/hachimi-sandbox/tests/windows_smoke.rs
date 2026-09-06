@@ -409,8 +409,9 @@ fn linked_worktree_git_mutation_is_temporary_and_branch_scoped() {
     let canary = std::path::PathBuf::from(release_canary());
     let marker = fixture.path().join("setup.json");
     install_sandbox_marker(&marker, &launcher).expect("sandbox setup");
-    prepare_workspace_acl(&worktree, &run_temp, &canary).expect("read-only workspace ACL");
     let git = git_program();
+    prepare_workspace_acl(&worktree, &run_temp, &canary, Some(&git))
+        .expect("read-only workspace ACL");
 
     std::fs::write(worktree.join("tracked.txt"), "first mutation\n")
         .expect("first mutation fixture");
@@ -419,7 +420,7 @@ fn linked_worktree_git_mutation_is_temporary_and_branch_scoped() {
         "linked-worktree index was writable before the temporary Git ACL"
     );
 
-    let stage_acl = prepare_git_mutation_acl(&worktree).expect("temporary Git stage ACL");
+    let stage_acl = prepare_git_mutation_acl(&worktree, &git).expect("temporary Git stage ACL");
     assert!(
         run_restricted_git(&launcher, &git, &worktree, &["add", "--", "tracked.txt"]),
         "restricted Git could not update the linked-worktree index"
@@ -446,7 +447,7 @@ fn linked_worktree_git_mutation_is_temporary_and_branch_scoped() {
         "linked-worktree metadata remained writable after the stage lease"
     );
 
-    let commit_acl = prepare_git_mutation_acl(&worktree).expect("temporary Git commit ACL");
+    let commit_acl = prepare_git_mutation_acl(&worktree, &git).expect("temporary Git commit ACL");
     assert!(
         run_restricted_git(
             &launcher,

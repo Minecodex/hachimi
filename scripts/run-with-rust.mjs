@@ -128,9 +128,10 @@ if (process.platform === "darwin") {
     childEnvironment.SHERPA_ONNX_LIB_DIR = sherpaRuntime;
     childEnvironment.DYLD_FALLBACK_LIBRARY_PATH = `${sherpaRuntime}${delimiter}${childEnvironment.DYLD_FALLBACK_LIBRARY_PATH ?? ""}`;
   }
-  // hachimi-cef-host is a Windows-only binary until the P4 macOS CEF port
-  // (docs/mac-plan/phase-4-cef-embedded-browser.md); nothing depends on it, so
-  // workspace-wide cargo invocations skip it on macOS.
+  // hachimi-cef-host builds through `pnpm cef:prepare` with its pinned CEF
+  // toolchain (docs/mac-plan/phase-4-cef-embedded-browser.md); nothing depends
+  // on it, so workspace-wide cargo invocations skip it on macOS to avoid
+  // requiring the CEF toolchain/download for every test run.
   if (rustTool === "cargo" && rustToolArguments.includes("--workspace")) {
     // Insert before the `--` separator; anything after it belongs to rustc.
     const separator = rustToolArguments.indexOf("--");

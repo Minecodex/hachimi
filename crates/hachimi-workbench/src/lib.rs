@@ -1,10 +1,12 @@
 //! Project, Checkout and task-draft services for the coding Workbench.
 
 mod attachment_host;
+mod attachment_staging;
 mod environment;
 mod git_mutation;
 mod handoff;
 mod plan_acceptance;
+mod system_git;
 #[cfg(test)]
 mod workspace_plan_tests;
 
@@ -12,10 +14,7 @@ pub use attachment_host::AttachmentModelContext;
 
 use std::{
     collections::BTreeSet,
-    fs::{File, OpenOptions},
-    io::{Read, Write},
     path::{Path, PathBuf},
-    process::Stdio,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -23,7 +22,6 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use hachimi_agent::{
     AgentRunCreateRequest, AgentRunFactoryError, AgentRunLaunchRequest, AgentRunLauncher,
 };
-use hachimi_process_policy::{ProcessPolicy, tokio_command};
 use hachimi_protocol::{
     AgentPermissionPolicy, AttachmentId, AttachmentRecord, AuthorityMode, CheckoutId, CheckoutKind,
     CheckoutRecord, CheckoutStatus, ExecutionTarget, GitRefRecord, ItemPayload, LlmSettings,
@@ -38,6 +36,10 @@ use hachimi_storage::{AgentStore, AgentStoreError, IdempotentMutationClaim};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
+
+use attachment_staging::stage_attachment;
+
+use system_git::{git_optional, git_required};
 
 const MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_ATTACHMENT_PREVIEW_BYTES: usize = 4 * 1024 * 1024;
@@ -129,6 +131,7 @@ pub struct WorkbenchService {
     store: AgentStore,
     worktree_root: PathBuf,
     attachment_root: PathBuf,
+    system_runtime: hachimi_system_runtime::SystemRuntimeManager,
 }
 
 impl WorkbenchService {
@@ -137,11 +140,13 @@ impl WorkbenchService {
         store: AgentStore,
         worktree_root: impl Into<PathBuf>,
         attachment_root: impl Into<PathBuf>,
+        system_runtime: hachimi_system_runtime::SystemRuntimeManager,
     ) -> Self {
         Self {
             store,
             worktree_root: worktree_root.into(),
             attachment_root: attachment_root.into(),
+            system_runtime,
         }
     }
 
@@ -229,7 +234,12 @@ impl WorkbenchService {
         {
             return Ok(existing);
         }
-        let git_root = git_optional(&canonical, &["rev-parse", "--show-toplevel"]).await?;
+        let git_root = git_optional(
+            &self.system_runtime,
+            &canonical,
+            &["rev-parse", "--show-toplevel"],
+        )
+        .await?;
         let now = now_ms();
         let project = ProjectRecord {
             id: ProjectId::random(),
@@ -500,12 +510,14 @@ impl WorkbenchService {
             .as_deref()
             .ok_or(WorkbenchError::GitRequired)?;
         let current = git_optional(
+            &self.system_runtime,
             Path::new(git_root),
             &["symbolic-ref", "--quiet", "--short", "HEAD"],
         )
         .await?
         .unwrap_or_default();
         let output = git_required(
+            &self.system_runtime,
             Path::new(git_root),
             &[
                 "for-each-ref",
@@ -610,11 +622,17 @@ impl WorkbenchService {
             .await?
             .ok_or_else(|| WorkbenchError::CheckoutNotFound(request.checkout_id.clone()))?;
         let root = Path::new(&checkout.path);
-        let head = git_optional(root, &["rev-parse", "HEAD"]).await?;
+        let head = git_optional(&self.system_runtime, root, &["rev-parse", "HEAD"]).await?;
         if request.expected_head.as_deref() != head.as_deref() {
             return Err(WorkbenchError::GitHeadChanged);
         }
-        let status = git_required(root, &["status", "--porcelain=v1", "-z"], None).await?;
+        let status = git_required(
+            &self.system_runtime,
+            root,
+            &["status", "--porcelain=v1", "-z"],
+            None,
+        )
+        .await?;
         let fingerprint = sha256_text(&status);
         if request.status_fingerprint != fingerprint {
             return Err(WorkbenchError::GitStatusChanged);
@@ -641,7 +659,7 @@ impl WorkbenchService {
         match &request.action {
             WorkbenchGitAction::Commit { message } => {
                 if request.include_unstaged {
-                    match git_required(root, &["add", "-A"], None).await {
+                    match git_required(&self.system_runtime, root, &["add", "-A"], None).await {
                         Ok(_) => stage = git_phase_ok("staged working tree changes"),
                         Err(error) => stage = git_phase_failed(error.to_string()),
                     }
@@ -659,7 +677,14 @@ impl WorkbenchService {
                                 .map(str::to_owned)
                         })
                         .unwrap_or_else(|| deterministic_commit_message(&status));
-                    match git_required(root, &["commit", "-m", &message], None).await {
+                    match git_required(
+                        &self.system_runtime,
+                        root,
+                        &["commit", "-m", &message],
+                        None,
+                    )
+                    .await
+                    {
                         Ok(output) => commit = git_phase_ok(output.trim()),
                         Err(error) => commit = git_phase_failed(error.to_string()),
                     }
@@ -669,9 +694,11 @@ impl WorkbenchService {
                 if !status.is_empty() {
                     return Err(WorkbenchError::GitCheckoutDirty);
                 }
-                stage = git_mutation::switch_branch(root, branch, *remote).await?;
+                stage = git_mutation::switch_branch(&self.system_runtime, root, branch, *remote)
+                    .await?;
                 if stage.status == WorkbenchGitPhaseStatus::Succeeded {
-                    let new_head = git_optional(root, &["rev-parse", "HEAD"]).await?;
+                    let new_head =
+                        git_optional(&self.system_runtime, root, &["rev-parse", "HEAD"]).await?;
                     self.store
                         .update_session_environment_baseline(
                             &request.session_id,
@@ -681,15 +708,25 @@ impl WorkbenchService {
                 }
             }
             WorkbenchGitAction::CreateBranch { branch } => {
-                stage = git_mutation::create_branch(root, branch).await?;
+                stage = git_mutation::create_branch(&self.system_runtime, root, branch).await?;
             }
         }
-        let final_head = git_optional(root, &["rev-parse", "HEAD"]).await?;
-        let final_status = git_required(root, &["status", "--porcelain=v1", "-z"], None).await?;
-        let branch = git_optional(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
-            .await?
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty());
+        let final_head = git_optional(&self.system_runtime, root, &["rev-parse", "HEAD"]).await?;
+        let final_status = git_required(
+            &self.system_runtime,
+            root,
+            &["status", "--porcelain=v1", "-z"],
+            None,
+        )
+        .await?;
+        let branch = git_optional(
+            &self.system_runtime,
+            root,
+            &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        )
+        .await?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
         self.store
             .bump_session_environment_revision(&request.session_id)
             .await?;
@@ -722,7 +759,12 @@ impl WorkbenchService {
                 let now = now_ms();
                 let head_revision = match project.git_root.as_deref() {
                     Some(git_root) => {
-                        git_optional(Path::new(git_root), &["rev-parse", "HEAD"]).await?
+                        git_optional(
+                            &self.system_runtime,
+                            Path::new(git_root),
+                            &["rev-parse", "HEAD"],
+                        )
+                        .await?
                     }
                     None => None,
                 };
@@ -756,6 +798,7 @@ impl WorkbenchService {
                 std::fs::create_dir_all(parent)
                     .map_err(|error| WorkbenchError::Git(error.to_string()))?;
                 git_required(
+                    &self.system_runtime,
                     Path::new(git_root),
                     &[
                         "worktree",
@@ -767,7 +810,9 @@ impl WorkbenchService {
                     Some(cancellation),
                 )
                 .await?;
-                let head_revision = git_optional(&checkout_path, &["rev-parse", "HEAD"]).await?;
+                let head_revision =
+                    git_optional(&self.system_runtime, &checkout_path, &["rev-parse", "HEAD"])
+                        .await?;
                 let now = now_ms();
                 let checkout = CheckoutRecord {
                     id: checkout_id,
@@ -834,7 +879,13 @@ impl WorkbenchService {
             {
                 return Err(WorkbenchError::CheckoutOutsideManagedRoot);
             }
-            let dirty = git_required(&canonical, &["status", "--porcelain=v1"], None).await?;
+            let dirty = git_required(
+                &self.system_runtime,
+                &canonical,
+                &["status", "--porcelain=v1"],
+                None,
+            )
+            .await?;
             if !dirty.is_empty() {
                 self.store
                     .update_checkout_lifecycle(checkout_id, CheckoutStatus::CleanupBlocked, false)
@@ -848,12 +899,19 @@ impl WorkbenchService {
                 .ok_or(WorkbenchError::GitRequired)?;
             let canonical_argument = canonical.to_string_lossy().into_owned();
             git_required(
+                &self.system_runtime,
                 Path::new(git_root),
                 &["worktree", "remove", &canonical_argument],
                 None,
             )
             .await?;
-            let _ = git_required(Path::new(git_root), &["worktree", "prune"], None).await?;
+            let _ = git_required(
+                &self.system_runtime,
+                Path::new(git_root),
+                &["worktree", "prune"],
+                None,
+            )
+            .await?;
         }
         Ok(self
             .store
@@ -1119,92 +1177,6 @@ impl WorkbenchService {
     }
 }
 
-fn stage_attachment(
-    source: &Path,
-    attachment_root: &Path,
-) -> Result<(AttachmentRecord, PathBuf), WorkbenchError> {
-    let canonical = std::fs::canonicalize(source)?;
-    let metadata = std::fs::metadata(&canonical)?;
-    if !metadata.is_file() {
-        return Err(WorkbenchError::InvalidAttachmentFile);
-    }
-    if metadata.len() > MAX_ATTACHMENT_BYTES {
-        return Err(WorkbenchError::AttachmentTooLarge);
-    }
-    let original_name = canonical
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(str::trim)
-        .filter(|name| !name.is_empty() && name.chars().count() <= 255)
-        .ok_or(WorkbenchError::InvalidAttachmentFile)?
-        .to_owned();
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or_default());
-    File::open(&canonical)?
-        .take(MAX_ATTACHMENT_BYTES + 1)
-        .read_to_end(&mut bytes)?;
-    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_ATTACHMENT_BYTES {
-        return Err(WorkbenchError::AttachmentTooLarge);
-    }
-    let content_hash = Sha256::digest(&bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    std::fs::create_dir_all(attachment_root)?;
-    let managed_path = attachment_root.join(&content_hash);
-    if !managed_path.is_file() {
-        let temporary_path = attachment_root.join(format!(
-            ".{content_hash}.{}.tmp",
-            AttachmentId::random().as_str()
-        ));
-        let mut temporary = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary_path)?;
-        temporary.write_all(&bytes)?;
-        temporary.sync_all()?;
-        drop(temporary);
-        if let Err(error) = std::fs::rename(&temporary_path, &managed_path) {
-            if managed_path.is_file() {
-                let _ = std::fs::remove_file(&temporary_path);
-            } else {
-                return Err(WorkbenchError::Io(error));
-            }
-        }
-    }
-    let attachment = AttachmentRecord {
-        id: AttachmentId::random(),
-        content_hash,
-        original_name: original_name.clone(),
-        mime_type: attachment_mime_type(&original_name).into(),
-        byte_size: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-        created_at_ms: now_ms(),
-    };
-    Ok((attachment, managed_path))
-}
-
-fn attachment_mime_type(name: &str) -> &'static str {
-    let extension = Path::new(name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    match extension.as_str() {
-        "txt" | "log" => "text/plain",
-        "md" | "markdown" => "text/markdown",
-        "json" => "application/json",
-        "csv" => "text/csv",
-        "pdf" => "application/pdf",
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "html" | "htm" => "text/html",
-        "xml" => "application/xml",
-        "yaml" | "yml" => "application/yaml",
-        _ => "application/octet-stream",
-    }
-}
-
 fn sha256_text(value: &str) -> String {
     Sha256::digest(value.as_bytes())
         .iter()
@@ -1234,56 +1206,6 @@ fn git_phase_failed(message: impl Into<String>) -> WorkbenchGitPhaseResult {
         status: WorkbenchGitPhaseStatus::Failed,
         message: Some(message.into()),
     }
-}
-
-async fn git_optional(root: &Path, args: &[&str]) -> Result<Option<String>, WorkbenchError> {
-    let output = tokio_command("git", ProcessPolicy::HiddenCaptured)
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|error| WorkbenchError::Git(error.to_string()))?;
-    Ok(output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned()))
-}
-
-async fn git_required(
-    root: &Path,
-    args: &[&str],
-    cancellation: Option<&CancellationToken>,
-) -> Result<String, WorkbenchError> {
-    let mut command = tokio_command("git", ProcessPolicy::HiddenCaptured);
-    command
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    let output = if let Some(cancellation) = cancellation {
-        tokio::select! {
-            () = cancellation.cancelled() => return Err(WorkbenchError::Cancelled),
-            output = command.output() => output,
-        }
-    } else {
-        command.output().await
-    }
-    .map_err(|error| WorkbenchError::Git(error.to_string()))?;
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr)
-            .trim()
-            .chars()
-            .take(1_024)
-            .collect::<String>();
-        return Err(WorkbenchError::Git(message));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn now_ms() -> i64 {
@@ -1379,7 +1301,12 @@ mod tests {
         let store = AgentStore::connect_in_memory().await.expect("store");
         let worktrees = tempfile::tempdir().expect("worktrees");
         let attachments = tempfile::tempdir().expect("attachments");
-        let service = WorkbenchService::new(store, worktrees.path(), attachments.path());
+        let service = WorkbenchService::new(
+            store,
+            worktrees.path(),
+            attachments.path(),
+            hachimi_system_runtime::SystemRuntimeManager::new(),
+        );
         let project = service
             .add_project(directory.path())
             .await
@@ -1549,7 +1476,12 @@ mod tests {
         let store = AgentStore::connect_in_memory().await.expect("store");
         let worktrees = tempfile::tempdir().expect("worktrees");
         let attachments = tempfile::tempdir().expect("attachments");
-        let service = WorkbenchService::new(store, worktrees.path(), attachments.path());
+        let service = WorkbenchService::new(
+            store,
+            worktrees.path(),
+            attachments.path(),
+            hachimi_system_runtime::SystemRuntimeManager::new(),
+        );
         let project = service
             .add_project(directory.path())
             .await
@@ -1579,12 +1511,21 @@ mod tests {
             .expect("task");
         let checkout = task.checkout.expect("checkout");
         std::fs::write(directory.path().join("README.md"), "changed\n").expect("change");
-        let head = git_optional(directory.path(), &["rev-parse", "HEAD"])
-            .await
-            .expect("head");
-        let status = git_required(directory.path(), &["status", "--porcelain=v1", "-z"], None)
-            .await
-            .expect("status");
+        let head = git_optional(
+            &service.system_runtime,
+            directory.path(),
+            &["rev-parse", "HEAD"],
+        )
+        .await
+        .expect("head");
+        let status = git_required(
+            &service.system_runtime,
+            directory.path(),
+            &["status", "--porcelain=v1", "-z"],
+            None,
+        )
+        .await
+        .expect("status");
 
         let stale = service
             .execute_git(
@@ -1647,7 +1588,12 @@ mod tests {
         let store = AgentStore::connect_in_memory().await.expect("store");
         let worktrees = tempfile::tempdir().expect("worktrees");
         let attachments = tempfile::tempdir().expect("attachments");
-        let service = WorkbenchService::new(store, worktrees.path(), attachments.path());
+        let service = WorkbenchService::new(
+            store,
+            worktrees.path(),
+            attachments.path(),
+            hachimi_system_runtime::SystemRuntimeManager::new(),
+        );
         let project = service
             .add_project(directory.path())
             .await
@@ -1680,12 +1626,21 @@ mod tests {
         std::fs::write(directory.path().join("staged.txt"), "staged\n").expect("staged");
         std::fs::write(directory.path().join("unstaged.txt"), "unstaged\n").expect("unstaged");
         git(directory.path(), &["add", "staged.txt"]);
-        let head = git_optional(directory.path(), &["rev-parse", "HEAD"])
-            .await
-            .expect("head");
-        let status = git_required(directory.path(), &["status", "--porcelain=v1", "-z"], None)
-            .await
-            .expect("status");
+        let head = git_optional(
+            &service.system_runtime,
+            directory.path(),
+            &["rev-parse", "HEAD"],
+        )
+        .await
+        .expect("head");
+        let status = git_required(
+            &service.system_runtime,
+            directory.path(),
+            &["status", "--porcelain=v1", "-z"],
+            None,
+        )
+        .await
+        .expect("status");
         let staged_only = service
             .execute_git(
                 &WorkbenchGitRequest {
@@ -1711,6 +1666,7 @@ mod tests {
             WorkbenchGitPhaseStatus::Succeeded
         );
         let committed = git_required(
+            &service.system_runtime,
             directory.path(),
             &["show", "--name-only", "--format="],
             None,
@@ -1721,9 +1677,14 @@ mod tests {
         assert!(!committed.contains("unstaged.txt"));
         assert!(directory.path().join("unstaged.txt").exists());
 
-        let status = git_required(directory.path(), &["status", "--porcelain=v1", "-z"], None)
-            .await
-            .expect("status");
+        let status = git_required(
+            &service.system_runtime,
+            directory.path(),
+            &["status", "--porcelain=v1", "-z"],
+            None,
+        )
+        .await
+        .expect("status");
         let include_unstaged = service
             .execute_git(
                 &WorkbenchGitRequest {
@@ -1753,13 +1714,21 @@ mod tests {
         );
 
         std::fs::write(directory.path().join("dirty.txt"), "dirty\n").expect("dirty");
-        let current_head = git_optional(directory.path(), &["rev-parse", "HEAD"])
-            .await
-            .expect("head");
-        let dirty_status =
-            git_required(directory.path(), &["status", "--porcelain=v1", "-z"], None)
-                .await
-                .expect("dirty status");
+        let current_head = git_optional(
+            &service.system_runtime,
+            directory.path(),
+            &["rev-parse", "HEAD"],
+        )
+        .await
+        .expect("head");
+        let dirty_status = git_required(
+            &service.system_runtime,
+            directory.path(),
+            &["status", "--porcelain=v1", "-z"],
+            None,
+        )
+        .await
+        .expect("dirty status");
         let dirty_checkout = service
             .execute_git(
                 &WorkbenchGitRequest {
@@ -1792,12 +1761,21 @@ mod tests {
         git(directory.path(), &["branch", "feature"]);
         git(directory.path(), &["push", "origin", "feature"]);
         git(directory.path(), &["branch", "-D", "feature"]);
-        let current_head = git_optional(directory.path(), &["rev-parse", "HEAD"])
-            .await
-            .expect("head");
-        let status = git_required(directory.path(), &["status", "--porcelain=v1", "-z"], None)
-            .await
-            .expect("status");
+        let current_head = git_optional(
+            &service.system_runtime,
+            directory.path(),
+            &["rev-parse", "HEAD"],
+        )
+        .await
+        .expect("head");
+        let status = git_required(
+            &service.system_runtime,
+            directory.path(),
+            &["status", "--porcelain=v1", "-z"],
+            None,
+        )
+        .await
+        .expect("status");
         let tracking = service
             .execute_git(
                 &WorkbenchGitRequest {
@@ -1820,10 +1798,15 @@ mod tests {
             .expect("tracking checkout");
         assert_eq!(tracking.stage.status, WorkbenchGitPhaseStatus::Succeeded);
         assert_eq!(
-            git_required(directory.path(), &["branch", "--show-current"], None)
-                .await
-                .expect("current branch")
-                .trim(),
+            git_required(
+                &service.system_runtime,
+                directory.path(),
+                &["branch", "--show-current"],
+                None
+            )
+            .await
+            .expect("current branch")
+            .trim(),
             "feature"
         );
     }
@@ -1833,7 +1816,12 @@ mod tests {
         let store = AgentStore::connect_in_memory().await.expect("store");
         let worktrees = tempfile::tempdir().expect("worktrees");
         let attachments = tempfile::tempdir().expect("attachments");
-        let service = WorkbenchService::new(store, worktrees.path(), attachments.path());
+        let service = WorkbenchService::new(
+            store,
+            worktrees.path(),
+            attachments.path(),
+            hachimi_system_runtime::SystemRuntimeManager::new(),
+        );
         let first = service
             .create_task(
                 &WorkbenchTaskStartRequest {
@@ -1934,7 +1922,12 @@ mod tests {
         let store = AgentStore::connect_in_memory().await.expect("store");
         let worktrees = tempfile::tempdir().expect("worktrees");
         let attachments = tempfile::tempdir().expect("attachments");
-        let service = WorkbenchService::new(store, worktrees.path(), attachments.path());
+        let service = WorkbenchService::new(
+            store,
+            worktrees.path(),
+            attachments.path(),
+            hachimi_system_runtime::SystemRuntimeManager::new(),
+        );
         let project = service
             .add_project(directory.path())
             .await

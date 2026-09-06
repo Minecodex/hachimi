@@ -43,16 +43,24 @@ const rustStress = (name, crate, test, seconds) => ({
 const phases =
   mode === "real"
     ? [
-        {
-          name: "browser",
-          seconds: browserSeconds,
-          command: process.execPath,
-          args: ["scripts/desktop-stress/browser-host-real.mjs"],
-        },
+        // The managed-Chromium browser host is Windows-only until the P4 CEF
+        // macOS port; on macOS real mode covers only the Computer phase.
+        ...(process.platform === "darwin"
+          ? []
+          : [
+              {
+                name: "browser",
+                seconds: browserSeconds,
+                command: process.execPath,
+                args: ["scripts/desktop-stress/browser-host-real.mjs"],
+              },
+            ]),
         rustStress(
           "computer",
           "hachimi-computer",
-          "captures_and_controls_the_win32_stress_fixture_with_wgc",
+          process.platform === "darwin"
+            ? "captures_and_controls_the_macos_stress_fixture"
+            : "captures_and_controls_the_win32_stress_fixture_with_wgc",
           computerSeconds,
         ),
       ]
@@ -194,7 +202,7 @@ async function runPhase(phase, phaseReport) {
 
 rmSync(outputRoot, { recursive: true, force: true });
 mkdirSync(outputRoot, { recursive: true });
-if (mode === "real" && process.platform === "win32") {
+if (mode === "real" && (process.platform === "win32" || process.platform === "darwin")) {
   const fixtureBuild = spawnSync(
     process.execPath,
     [
@@ -209,11 +217,13 @@ if (mode === "real" && process.platform === "win32") {
     { cwd: root, stdio: "inherit", windowsHide: true },
   );
   if (fixtureBuild.status !== 0) {
-    throw new Error("failed to build the Win32 Computer stress fixture");
+    throw new Error("failed to build the Computer stress fixture");
   }
   process.env.HACHIMI_COMPUTER_STRESS_FIXTURE = resolve(
     root,
-    "target/debug/examples/stress_fixture.exe",
+    process.platform === "win32"
+      ? "target/debug/examples/stress_fixture.exe"
+      : "target/debug/examples/stress_fixture",
   );
 }
 const report = {

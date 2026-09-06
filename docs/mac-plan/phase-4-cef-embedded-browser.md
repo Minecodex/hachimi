@@ -1,6 +1,6 @@
 # P4：CEF 内嵌浏览器 macOS 版
 
-- 状态：未开始
+- 状态：阶段 A/B/C 实现已完成（2026-08-29）；桌面合成 runtime 的真机 GUI 目视验收待用户，性能项（IOSurface 零拷贝帧通道）后移 P5
 - 前置：P1 完成（构建链平台化）；建议与 P2/P3 并行，但**先做原型验证再投入完整实现**
 - 目标：CEF 嵌入浏览器在 mac 上可用；若原型验证不通过，则定型"mac 长期走浏览器扩展通道"的降级方案并文档化。
 - 风险：**全移植计划最高风险项**。窗口嵌入模型在 mac 无直接对应，需原型先行。
@@ -41,36 +41,65 @@
 
 ## 3. 任务清单（按执行顺序）
 
-### 阶段 A：原型验证（1-2 周，决定是否继续）
+### 阶段 A：原型验证（1-2 周，决定是否继续）—— ✅ 已完成（2026-08-29）
 
-- [ ] 最小原型：Tauri mac 窗口 + cef-rs helper bundle，把 CEF 浏览器作为 NSView 嵌入 WKWebView 窗口的指定区域，验证：
-  - [ ] 叠加/z-order 正确（前端 UI 浮层能盖住浏览器区域）
-  - [ ] 坐标映射与 Retina scale 正确（点击命中）
-  - [ ] 窗口 resize / move 跟随
-  - [ ] 键盘/滚轮事件路由
-- [ ] 结论写入本文档"原型结论"一节：继续 / 转 OSR / 转降级。
+- [x] 最小原型：Tauri mac 窗口 + cef-rs helper bundle。关键结论：**跨进程 NSView 直接嵌入在 mac 上不可行**（CEF render 进程的 NSView 无法挂进 browser 进程窗口，Win32 HWND 父子模型在 mac 无对应），改走 **OSR + 桌面侧合成**：CEF 以 windowless 模式渲染，帧回传桌面进程，由原生 NSView overlay 盖在 WKWebView 上方（等价 Windows 兄弟 HWND z-order 模型）。
+  - [x] 叠加/z-order 正确（前端 UI 浮层能盖住浏览器区域）：实测 overlay 为 content view 最顶 subview（WKWebView 之上），快照读回 CEF 蓝色帧像素。
+  - [x] 坐标映射与 Retina scale 正确（点击命中）：400×300pt overlay 快照为 800×600px（scale=2），点击经 IPC 命中页面 DOM 计数。
+  - [x] 键盘/滚轮事件路由：鼠标链路实测通过（真实 NSEvent → overlay → IPC `Input.dispatchMouseEvent` → 页面计数）；键盘/滚轮走同一 IPC 通道（host 已有 `send_key_event`/`send_mouse_event`），桌面侧接入留 P4-C。
+  - [x] 窗口 resize / move 跟随：OSR 模型下是 overlay frame 更新 + `WasResized`——P4-C 已实现（host `set_bounds` 接 `was_resized`，桌面 `cef_overlay.sync_tab` 同步 overlay frame；冒烟实测 set_bounds 后按新尺寸出帧）。
+- [x] 结论写入本文档"原型结论"一节：继续 / 转 OSR / 转降级 → **继续，路线即 OSR**。
 
-### 阶段 B：打包链路（原型通过后）
+#### 原型结论（2026-08-29）
 
-- [ ] `scripts/build-cef-host.mjs`（P1 已建骨架）mac 分支完整实现：下载 `cef_binary_*_macosarm64_minimal.tar.bz2`（pin SHA256）+ mac 工具链构建。
-- [ ] `bundle-hachimi-cef-host.rs` manifest 平台参数化 + helper `.app` 产出结构定型。
-- [ ] `build.rs verify_cef_runtime()` mac 校验段。
-- [ ] `embedded_browser.rs` 的 `resolve_host_executable` / `validate_runtime` / `native_window_handle` mac 实现。
-- [ ] 签名/公证接入（与 P5 的签名基建对接；**CEF helper app 是 Gatekeeper 最严格的部分**，不要拖到最后）。
+原型产物：`crates/hachimi-cef-host`（mac 启动序列 + OSR 渲染处理器 + bundle）与 `apps/desktop/src-tauri/examples/cef_osr_probe.rs`（桌面合成探针，自校验自终止）。实测输出 `COMPOSITE-PROBE-OK`（`PROBE z_order=true input=true frames_seen=3`）。
 
-### 阶段 C：功能补全
+已打通的宿主侧链路：
 
-- [ ] `tab_manager.rs` 四个窗口函数的 AppKit 实现（引入 objc2/objc2-app-kit 依赖，cfg(target_os = "macos")）。
-- [ ] 快捷键处理的 mac 键位验证与 Cmd 语义适配。
-- [ ] `scripts/test-cef-host.ps1`（P/Invoke 创建 Win32 窗口做 smoke）的 mac 等价冒烟。
-- [ ] `managed_sandbox_runtime.rs` / `permission_settings_commands.rs` 的进程名/签名身份适配。
-- [ ] CEF mac 沙箱语义确认（helper app sandbox 与 P2 Seatbelt 后端的关系：CEF 进程沙箱独立于 workspace 沙箱，注意两者不冲突）。
+- mac 启动序列（`main.rs`）：autoreleasepool → `LibraryLoader`（按可执行路径是否含 `.app/Contents/Frameworks/` 判定 helper）→ `cef::api_hash` 校验（缺了会在 `cef_command_line_create` SIGTRAP）→ command line → `run_cef_host`。
+- `host_app.rs`：mac 必须 `multi_threaded_message_loop=0` + 主线程 `cef::run_message_loop()`；`--hachimi-osr` 开关 + `windowless_rendering_enabled`；OSR 下允许 `parent_hwnd=0`。
+- `tab_manager.rs`：OSR 下 `WindowInfo::set_as_windowless(null_mut())`；`HachimiRenderHandler.on_paint` 把 BGRA 帧写到 `<profile>/frames/<tab>.bgra`（原型期帧通道，P4-C 换 IOSurface/共享内存）；OSR 下 `create_browser` 初始 URL 不生效（停在 about:blank），已在 `browser_created` 显式 `frame.load_url(url)` 修复。
+- `bundle-hachimi-cef-host.rs` mac 分支产出 `target/cef-bundle/hachimi-cef-host.app`（主 app + 5 helper + framework）；cef-dll-sys 的 mac 构建依赖 **ninja**（固定在 `target/tools/ninja`，构建时挂入 PATH）。
 
-## 4. 降级方案定型（若原型不通过）
+踩坑记录（P4-B/C 勿再踩）：
 
-- [ ] mac 上 `embedded_browser` 保持 `RuntimeMissing` 降级，UI 文案与能力声明平台化（"内嵌浏览器当前仅 Windows 可用"）。
-- [ ] 浏览器扩展通道（Chrome/Edge/Safari 扩展可行性评估）作为 mac 浏览器能力主路径。
-- [ ] 决策与理由写入 ADR-0004 增补。
+1. tao `run_return` + `ControlFlow::Poll` 永不返回（poll 模式事件不枯竭）——必须在 `MainEventsCleared` 时置 `Exit`，泵一轮即回。
+2. 开发机系统代理（127.0.0.1:7890）会劫持 CEF 内 loopback 请求——探针/测试一律 `--no-proxy-server` 并清 proxy 环境变量。
+3. CEF `on_paint` 输出 BGRA，`NSBitmapImageRep` 32bpp 是 RGBA，直接塞红蓝互换；且须让 rep 自持像素数据（null planes + copy），否则 layer 内容悬垂。
+4. WKWebView 内容是跨进程 CALayer，`cacheDisplayInRect` 进程内快照拍不到它（读回全 0）；z-order 用 subviews 顺序 + overlay 自身快照双信号证明。
+5. CEF sandbox feature 需要 main.rs 在 helper 进程里 `cef_sandbox_initialize`（bundle 自带 `libcef_sandbox.dylib`），否则 helper 崩 exit_code=5 —— P4-C 已接入，构建恢复默认 feature。
+
+P4-C 追加踩坑记录：
+
+6. mac 上 `cef::quit_message_loop()` 无法终止 `cef::run_message_loop()`（无 NSApplication 时消息泵不响应 quit）——host 改为主线程 `do_message_loop_work()` 手动泵 + 后台命令线程退出标志。
+7. 测试夹具的 HTTP 服务必须先读完请求头再写响应：socket 带未读数据直接 close 会触发内核 RST，Chromium 报 `ERR_CONNECTION_RESET`（时序敏感，表现为随机失败）。
+8. 帧内容断言要等"标记色帧"而不是"第 N 帧"：OSR 首几帧是空白页，加载完成前像素是白的。
+
+### 阶段 B：打包链路（原型通过后）—— ✅ 已完成（2026-08-29）
+
+- [x] `scripts/prepare-desktop-runtime.mjs`（`pnpm cef:prepare` 入口，即原计划 `build-cef-host.mjs` 骨架的落点）mac 分支完整实现：pinned CMake 3.31.8（macos-universal，SHA256 `d1449f96…`）+ Ninja 1.13.1（ninja-mac，SHA256 `da779779…`）下载校验、`cargo build --bin hachimi-cef-host`、macosarm64 归档 SHA256 pin（`e3d268c8…`）校验、`.app` bundle 产出。注意 mac 打包含**真实 bin**（Windows 打 cdylib 只需 `--lib`）。
+- [x] `bundle-hachimi-cef-host.rs` manifest 平台参数化（windows-x64 / macos-arm64 常量分 cfg）+ helper `.app` 产出结构定型（主 app + 5 helper + framework，247 文件全量哈希清单）。
+- [x] `build.rs verify_cef_runtime()` mac 校验段：`target_os` 运行时参数化（跨编译安全），mac 断言 `macos-arm64` 平台、归档 SHA256、`.app/Contents/MacOS` 宿主与 framework 二进制标记；缺失时提示 `corepack pnpm cef:prepare`。
+- [x] `embedded_browser.rs` mac 实现：`resolve_host_executable` 解析 `.app/Contents/MacOS/hachimi-cef-host`（resource dir / 可执行相邻 / target/cef-bundle 三级回退）；`validate_runtime` 校验 Info.plist、framework 二进制、基础 helper、`runtime-manifest.json`；OSR 路线下 `native_window_handle` 返回 0（windowless），spawn 追加 `--hachimi-osr`，`attach_window` 为空操作（无父窗口可设）。
+- [ ] 签名/公证接入：**移交 P5**（签名基建在 P5 落地；本阶段已预留稳定 bundle id `com.hachimi.cef-host`，helper app 的 codesign/notarize 是 P5 首批接入对象）。
+
+### 阶段 C：功能补全（按 OSR + 桌面合成路线，2026-08-29 修订）—— ✅ 实现完成（2026-08-29），真机目视验收待用户
+
+- [x] **host OSR 语义补全**：`set_bounds` 接 `was_resized()` + `notify_screen_info_changed()`、`set_visible`/`activate_tab` 接 `was_hidden()`；`HachimiRenderHandler` 实现 `screen_info`（`device_scale_factor` 来自 `CefBounds.scale_factor`）+ `view_rect` 输出逻辑像素（物理/scale）。冒烟实测：1600×1200@2x → 帧 1600×1200，`set_bounds` 后按新尺寸重渲。
+- [x] **输入注入 IPC**：`CefHostCommand::SendInput` + `CefInputEvent`（mouse_move/mouse_button/mouse_wheel/key），host 侧映射 `send_mouse_move/click/wheel_event`/`send_key_event`（真实输入复用 `user_input` 语义：清 agent 导航策略 + input_epoch）；mac 键码→Chromium VK 映射表与 NSEvent 修饰位换算在 `hachimi-browser/src/mac_input.rs`（含单测）。冒烟实测：注入点击命中页面 DOM 计数。
+- [x] **桌面合成 runtime**：`apps/desktop/src-tauri/src/cef_overlay.rs`——按 tab 管理 `HachimiCefOverlayView`（NSImageView 子类，挂 workbench content view 最顶层）；host 写完帧发 `FrameReady` IPC 事件驱动桌面读帧合成（无轮询）；物理 px ÷ scale 回点 + AppKit 左下原点翻转在桌面侧完成；NSEvent（鼠标/滚轮/键盘）→ `SendInput`；`SetVisible`/隐藏联动。objc2 系从 dev-dependencies 提为 `[target.'cfg(target_os = "macos")'.dependencies]`。**真机 GUI 目视验收（渲染清晰度/滚动手感/焦点切换）待用户**。
+- [x] 快捷键 mac Cmd 语义：`shortcut_for_key` mac 分支 Cmd+L/T/W/R + Cmd+←/→（Windows Ctrl/Alt 不变），测试按 cfg 分流。
+- [x] mac 等价冒烟：`scripts/test-cef-host.mjs`（`pnpm test:cef:mac`）——ready/建 tab/Retina 帧/输入注入/resize 重渲/导航错误/干净退出全断言，进程组清理不泄漏 helper。
+- [x] `is_internal_sidecar` 覆盖 mac helper 进程名（`starts_with("hachimi-cef-host")`）；`managed_sandbox_runtime.rs` 经核已无需改（P2 重写后不再读 runtime-manifest）。
+- [x] **CEF mac 沙箱接入**：`main.rs` 在 helper 进程里 `cef::sandbox::Sandbox::new()` + `initialize`（先于 framework 加载；bundle 自带 `Libraries/libcef_sandbox.dylib`）；带默认 `sandbox` feature 构建冒烟全绿，`prepare-desktop-runtime.mjs` 已摘掉 `--no-default-features`。CEF 进程沙箱是 Chromium 内建 Seatbelt，与 P2 workspace Seatbelt 独立不冲突。
+- [x] **shutdown 修复（计划外）**：mac 上 `quit_message_loop` 无法终止 `run_message_loop`（无 NSApplication），改为主线程 `do_message_loop_work` 手动泵 + 退出标志，冒烟验证 exit 0。
+- [ ] （性能后段，可后移 P5）帧通道升级：`on_accelerated_paint` + IOSurface 零拷贝（cef `accelerated_osr` feature + wgpu），替换文件落盘通道。
+
+## 4. 降级方案定型（~~若原型不通过~~ → 不适用：原型已通过，走 OSR + 桌面合成路线）
+
+- [x] ~~mac 上 `embedded_browser` 保持 `RuntimeMissing` 降级~~（原型通过，未走降级）。
+- [x] ~~浏览器扩展通道作为 mac 浏览器能力主路径~~（未采用；扩展通道保持现有独立能力定位）。
+- [x] ~~决策与理由写入 ADR-0004 增补~~（路线决策与依据已记录于本文档"原型结论"一节）。
 
 ## 出口标准
 

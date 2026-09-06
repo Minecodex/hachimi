@@ -1377,12 +1377,7 @@ fn validate_dimensions(width: u32, height: u32) -> Result<(), ComputerHostError>
         .ok_or_else(|| broker("window_size_invalid"))
 }
 
-fn fingerprint(value: &impl serde::Serialize) -> String {
-    Sha256::digest(serde_json::to_vec(value).unwrap_or_default())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
+use super::fingerprint;
 
 fn broker(message: impl Into<String>) -> ComputerHostError {
     ComputerHostError::Broker(message.into())

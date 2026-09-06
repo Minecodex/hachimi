@@ -70,8 +70,31 @@ const ERROR_COPY: Record<string, [string, string]> = {
     "The Workspace Worker could not be registered.",
   ],
   system_git_missing: [
-    "未找到系统 Git（需要 2.40 及以上），Workspace Git 不可用。",
-    "System Git (>= 2.40) was not found; Workspace Git is unavailable.",
+    "未找到通过能力验证的系统 Git，Workspace Git 不可用。",
+    "No capability-verified system Git was found; Workspace Git is unavailable.",
+  ],
+  system_git_probe_timeout: ["系统 Git 能力检测超时。", "System Git capability probing timed out."],
+  system_git_probe_failed: ["系统 Git 能力检测失败。", "System Git capability probing failed."],
+  system_git_capability_missing: [
+    "系统 Git 缺少此功能所需的能力。",
+    "System Git lacks a capability required by this feature.",
+  ],
+  system_git_changed: [
+    "系统 Git 在任务启动前发生变化，请重新检测。",
+    "System Git changed before launch; detect it again.",
+  ],
+  system_shell_missing: ["未找到可用的默认 Shell。", "No usable default shell was found."],
+  system_shell_probe_timeout: [
+    "默认 Shell 能力检测超时。",
+    "Default shell capability probing timed out.",
+  ],
+  system_shell_probe_failed: [
+    "默认 Shell 能力检测失败。",
+    "Default shell capability probing failed.",
+  ],
+  system_shell_changed: [
+    "默认 Shell 在终端启动前发生变化，请重新检测。",
+    "The default shell changed before terminal launch; detect it again.",
   ],
   motion_catalog_unavailable: [
     "内置动作资源不可用，角色动作已降级。",
@@ -154,6 +177,7 @@ const ERROR_COPY: Record<string, [string, string]> = {
 const COMPONENT_COPY: Record<RuntimeComponentId, [string, string]> = {
   gateway: ["本地消息服务", "Local messaging service"],
   internal_resources: ["内部运行资源", "Internal runtime resources"],
+  system_tools: ["系统工具", "System tools"],
   mcp: ["MCP 服务", "MCP services"],
   scheduler: ["计划任务服务", "Scheduled task service"],
   browser_extension: ["浏览器扩展", "Browser extension"],

@@ -14,6 +14,10 @@ pub struct SkillChangeWatch {
     stop_event: usize,
     #[cfg(windows)]
     thread: Option<std::thread::JoinHandle<()>>,
+    #[cfg(not(windows))]
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(not(windows))]
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl SkillChangeWatch {
@@ -23,6 +27,16 @@ impl SkillChangeWatch {
 
     pub fn try_recv(&mut self) -> Option<Vec<PathBuf>> {
         self.receiver.try_recv().ok()
+    }
+}
+
+#[cfg(not(windows))]
+impl Drop for SkillChangeWatch {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -41,7 +55,6 @@ impl Drop for SkillChangeWatch {
 }
 
 impl SkillHost {
-    #[cfg(windows)]
     fn watch_root_snapshot(&self) -> Vec<PathBuf> {
         let mut roots = self
             .discovered_roots
@@ -107,10 +120,88 @@ impl SkillHost {
         })
     }
 
+    /// Polling fallback for macOS/Linux: snapshots each watched root every
+    /// 250ms and reports roots whose (path -> size/mtime) map changed.
+    /// Sufficient for Skill directories; a `notify`/FSEvents upgrade is a
+    /// deliberate later step.
     #[cfg(not(windows))]
     pub fn watch_changes(&self) -> Result<SkillChangeWatch, SkillHostError> {
-        Err(SkillHostError::NativeWatchUnsupported)
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let host = self.clone();
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_thread = Arc::clone(&stop);
+        let thread = std::thread::spawn(move || {
+            // Roots are re-snapshotted every iteration so context-bound Repo
+            // roots registered after watch startup are picked up.
+            let mut roots = host.watch_root_snapshot();
+            let mut previous = portable_snapshot(&roots);
+            while !stop_thread.load(Ordering::Acquire) {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                let current_roots = host.watch_root_snapshot();
+                if current_roots != roots {
+                    roots = current_roots;
+                    previous = portable_snapshot(&roots);
+                    continue;
+                }
+                let current = portable_snapshot(&roots);
+                let changed = roots
+                    .iter()
+                    .filter(|root| previous.get(*root) != current.get(*root))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                previous = current;
+                if !changed.is_empty() && sender.send(changed).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(SkillChangeWatch {
+            receiver,
+            stop,
+            thread: Some(thread),
+        })
     }
+}
+
+/// Path → (size, mtime) stamp so content-only edits are observed.
+#[cfg(not(windows))]
+type PortableSnapshot = std::collections::BTreeMap<
+    PathBuf,
+    std::collections::BTreeMap<PathBuf, (u64, Option<std::time::SystemTime>)>,
+>;
+
+#[cfg(not(windows))]
+fn portable_snapshot(roots: &[PathBuf]) -> PortableSnapshot {
+    fn collect(
+        path: &std::path::Path,
+        output: &mut std::collections::BTreeMap<PathBuf, (u64, Option<std::time::SystemTime>)>,
+    ) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let stamp = std::fs::metadata(&path)
+                .ok()
+                .map(|metadata| (metadata.len(), metadata.modified().ok()))
+                .unwrap_or_default();
+            output.insert(path.clone(), stamp);
+            if path.is_dir() {
+                collect(&path, output);
+            }
+        }
+    }
+    roots
+        .iter()
+        .map(|root| {
+            let mut entries = std::collections::BTreeMap::new();
+            collect(root, &mut entries);
+            (root.clone(), entries)
+        })
+        .collect()
 }
 
 #[cfg(windows)]

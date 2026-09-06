@@ -179,18 +179,35 @@ fn verify_native_runtime(runtime: &Path) {
     }
 }
 
-fn verify_cef_runtime(root: &Path) {
+fn verify_cef_runtime(root: &Path, target_os: &str) {
     const CEF_CRATE_VERSION: &str = "151.2.0+151.3.14";
     const CHROMIUM_VERSION: &str = "151.0.7922.72";
-    const ARCHIVE_SHA256: &str = "c63a18909fea077b5c3b5f9a3194f05781cd909efa8a6d7a543cad99c4183a55";
+    let (expected_platform, archive_sha256, host_marker, libcef_marker, prepare_hint) =
+        match target_os {
+            "windows" => (
+                "windows-x64",
+                "c63a18909fea077b5c3b5f9a3194f05781cd909efa8a6d7a543cad99c4183a55",
+                "hachimi-cef-host.exe",
+                "libcef.dll",
+                "scripts/build-cef-host.ps1 -Release",
+            ),
+            "macos" => (
+                "macos-arm64",
+                "e3d268c88c612548f679aa454457e415d41c796bc5996f592b8263749c9681fd",
+                "hachimi-cef-host.app/Contents/MacOS/hachimi-cef-host",
+                "hachimi-cef-host.app/Contents/Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework",
+                "corepack pnpm cef:prepare",
+            ),
+            other => panic!("CEF Runtime verification is unsupported for target {other}"),
+        };
     let manifest_path = root.join("runtime-manifest.json");
     println!("cargo:rerun-if-changed={}", manifest_path.display());
     if !manifest_path.is_file() {
         if std::env::var("PROFILE").as_deref() == Ok("release") {
-            panic!("CEF Runtime is missing; run scripts/build-cef-host.ps1 -Release");
+            panic!("CEF Runtime is missing; run {prepare_hint} first");
         }
         println!(
-            "cargo:warning=CEF Runtime is absent; the embedded browser is unavailable until scripts/build-cef-host.ps1 runs"
+            "cargo:warning=CEF Runtime is absent; the embedded browser is unavailable until {prepare_hint} runs"
         );
         return;
     }
@@ -203,8 +220,8 @@ fn verify_cef_runtime(root: &Path) {
         Some(CEF_CRATE_VERSION)
     );
     assert_eq!(manifest["chromiumVersion"].as_str(), Some(CHROMIUM_VERSION));
-    assert_eq!(manifest["platform"].as_str(), Some("windows-x64"));
-    assert_eq!(manifest["archiveSha256"].as_str(), Some(ARCHIVE_SHA256));
+    assert_eq!(manifest["platform"].as_str(), Some(expected_platform));
+    assert_eq!(manifest["archiveSha256"].as_str(), Some(archive_sha256));
     let files = manifest["files"]
         .as_array()
         .expect("CEF Runtime manifest must contain files");
@@ -222,8 +239,8 @@ fn verify_cef_runtime(root: &Path) {
                 )),
             "invalid CEF Runtime path: {relative}"
         );
-        has_host |= relative.eq_ignore_ascii_case("hachimi-cef-host.exe");
-        has_libcef |= relative.eq_ignore_ascii_case("libcef.dll");
+        has_host |= relative.eq_ignore_ascii_case(host_marker);
+        has_libcef |= relative.eq_ignore_ascii_case(libcef_marker);
         let path = root.join(relative_path);
         println!("cargo:rerun-if-changed={}", path.display());
         let metadata = std::fs::symlink_metadata(&path).unwrap_or_else(|error| {
@@ -358,7 +375,9 @@ fn verify_motion_catalog(root: &Path) {
 }
 
 fn register_sandbox_sidecar_hashes() {
-    let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let windows = target_os == "windows";
+    let macos = target_os == "macos";
     for (name, environment) in [
         ("hachimi-sandbox-setup", "HACHIMI_SANDBOX_SETUP_SHA256"),
         (
@@ -372,17 +391,24 @@ fn register_sandbox_sidecar_hashes() {
             "HACHIMI_WORKSPACE_WORKER_SHA256",
         ),
     ] {
-        if !windows {
-            // Non-Windows platforms have no attested sandbox sidecars yet (P2);
-            // emit a placeholder so `env!` consumers still compile.
+        // macOS Seatbelt stages only the canary and the workspace worker;
+        // the Windows-only launcher/setup/attest sidecars get placeholders.
+        let staged = windows
+            || (macos && matches!(name, "hachimi-sandbox-canary" | "hachimi-workspace-worker"));
+        if !staged {
             println!("cargo:rustc-env={environment}=");
             continue;
         }
-        let path = Path::new("resources/internal-runtime").join(format!("{name}.exe"));
+        let file_name = if windows {
+            format!("{name}.exe")
+        } else {
+            name.to_owned()
+        };
+        let path = Path::new("resources/internal-runtime").join(&file_name);
         println!("cargo:rerun-if-changed={}", path.display());
         if !path.is_file() {
             panic!(
-                "bundled Sandbox sidecar is missing: {}. Run the sidecar preparation script first",
+                "bundled Sandbox sidecar is missing: {}. Run `corepack pnpm sidecars:prepare` first",
                 path.display()
             );
         }
@@ -434,8 +460,15 @@ fn main() {
     if let Some(runtime) = native_runtime {
         verify_native_runtime(Path::new(runtime));
     }
-    if target_os == "windows" {
-        verify_cef_runtime(Path::new("../../../target/cef-bundle"));
+    if target_os == "macos" {
+        // The bundled sherpa-onnx dylibs use @rpath install names and ship in
+        // Contents/Resources/sherpa-onnx; point the executable's rpath there
+        // so the .app is self-contained when launched outside a dev shell
+        // (DYLD_FALLBACK_LIBRARY_PATH only exists under scripts/run-with-rust).
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Resources/sherpa-onnx");
+    }
+    if matches!(target_os.as_str(), "windows" | "macos") {
+        verify_cef_runtime(Path::new("../../../target/cef-bundle"), &target_os);
     }
     register_sandbox_sidecar_hashes();
     tauri_build::build();

@@ -1,6 +1,6 @@
 # P1：构建链平台化与 arm64 dev 包
 
-- 状态：进行中（M0-M4 已完成，M5 出口验证收尾中）
+- 状态：已完成（2026-08-22 M0-M5 全部完成并实测，见"出口标准（实测）"；2026-08-30 复核确认唯一残留的受限环境变量清单项已被 P2 Seatbelt 后端覆盖，见第 6 节）
 - 前置：无（移植第一步）
 - 目标：macOS arm64 上 `pnpm dev` / `cargo build` 全链路跑通，产出可运行的 dev 包；沙箱、内嵌浏览器、Computer Use 显式降级（fail-closed / degraded 状态已在产品语义内）。
 
@@ -35,14 +35,14 @@
 
 ## 3. git 来源（已定：全平台跟随 codex，用系统 git）
 
-- 决策（2026-08-22）：**Windows 与 macOS 统一使用系统 git**，对标 openai/codex；拆除 pinned MinGit + manifest attestation 体系。这是 ADR-0001/0005 已定边界的变更（实施时同步更新两篇 ADR），原因与影响如下。
+- 决策（2026-08-22，2026-09-06 由 ADR-0006 完成架构收口）：**Windows 与 macOS 统一使用系统 git**；拆除 pinned MinGit + manifest attestation，并由统一 System Runtime 发现、探测和租约化注入。
 - 参考来源（按 AGENTS.md 规则固定版本、登记）：openai/codex @ `4f39251a010a8bd7d692d25fb33832ff06f1635a`（main，2026-08-22 检索），`codex-rs/git-utils/`：
   - 所有 git 操作 `Command::new("git")` 直接走 PATH（`operations.rs:117`、`branch.rs:129`、`status.rs:30`、`info.rs:384`），全平台一致；
   - 内部基线 / ghost commit 用纯 Rust 的 `gix`（`baseline.rs`），完全不经 git 二进制；
   - 对不可信工作区的加固在配置与进程层而非二进制层：`-c core.hooksPath=<disabled>` 禁 hooks、`SAFE_BARE_REPOSITORY_CONFIG`、`scrub_non_inheritable_env_vars`、`GIT_OPTIONAL_LOCKS=0`、unix 进程组杀树 / Windows Job Object（`operations.rs:107-114`、`git_process.rs`）。
 - **保留**：worker 显式绝对路径注入契约（`setup.rs:200-202`，"never resolve Git from their checkout current directory"）——与二进制来源无关，是防恶意仓库 git shim 的关键；系统 git 在 setup 期一次性解析为绝对路径后照旧注入。
 - **拆除**（managed git 依赖链全清单，M0 已完成）：
-  - [x] `setup.rs:115-198` `trusted_git_runtime()`/`validate_managed_git()` 的布局 + 双 manifest 校验 → 已改为系统 git 解析（Windows 候选：`C:\Program Files\Git\cmd\git.exe`、`%LOCALAPPDATA%\Programs\Git\cmd\git.exe`，再退化 PATH；mac：`/usr/bin/git` 再退化 PATH）+ `git --version` 下限校验（≥2.40）。
+  - [x] `trusted_git_runtime()`/`validate_managed_git()` 与旧 OnceLock 解析器已删除；`hachimi-system-runtime` 按宿主 Shell/Windows 环境 `PATH`、进程 `PATH`、平台候选依次探测，并按 `git_inspect`、`git_local_mutation`、`git_worktree` 能力接受 Git，不再设置版本下限。Finder 最小环境下会先发现 Homebrew Git，也允许通过探测的 Apple Git 2.39.5。
   - [x] `runtime_attestation.rs` `ManagedGitManifest` 哈希校验 → 已删除，sidecar 完整性校验保留。
   - [x] `build.rs` `verify_managed_git()` → 已整体删除。
   - [x] `scripts/prepare-managed-git.ps1`、`tauri.conf.json` resources 的 `managed-git/`、`build-portable.ps1` 的 `git.exe` 断言 → 已删除（installer 体积随之缩小）。
@@ -51,8 +51,8 @@
   - [x] 附带清理：`permission_settings_commands.rs` 的 bundled git 候选源、`runtime-health.tsx` 的 managed*git*\* 文案（替换为 `system_git_missing`）、`external-staging-gate.yml` 的 prepare-managed-git 步骤、`.gitignore` 条目。
   - [x] ADR-0001/0005 已追加 2026-08-22 修订段。
 - **加固（跟随 codex）**：git.rs 主调用层本已有 `core.hooksPath=<NUL|/dev/null>` + `GIT_OPTIONAL_LOCKS=0` + env_clear；M0 补齐了 `diff.rs`/`browser.rs` 两个只读调用点的 hooksPath。
-- **风险与对策**：① 用户未装 git（桌面产品受众比 codex CLI 宽）→ fail-closed + 安装/首启预检 + UI 引导安装 git-for-windows / Xcode CLT；② 版本漂移 → 版本下限 + CI 跟踪最新 git-for-windows 的兼容性坑位；③ 解析顺序固定候选优先于 PATH，防 PATH 前置劫持。
-- **E2E**：新系统 git 路径的 E2E 覆盖本期不做；release gate / `test-windows-release.ps1` / `build-portable.ps1` 中含 `git.exe` 的断言已做最小删除。
+- **风险与对策**：① 用户未装 git → 应用与 Sandbox 正常启动，仅 Git 能力禁用并显示准确错误；安装后可点击重新检测；② 版本漂移 → 按能力探测并在 Worker 启动前复核文件身份；③ PATH 劫持 → 丢弃相对/项目路径，探测后只注入规范化绝对路径。
+- **E2E**：桌面覆盖空仓库初始提交、索引/未跟踪文件不变、Git 缺失时禁用及恢复后刷新成功；release gate 另保留 macOS `.app` GUI 等价最小环境和 Windows standard-user 清理 PATH 的系统发现验证。
 - 备选备查：GitHub Desktop 的 dugite-native 提供 pinned mac git 构建（全平台自带 git 的另一流派），因 codex 基线优先而不采用。
 
 ## 4. Tauri bundle macOS 段（已完成）
@@ -72,7 +72,7 @@
 
 | 位置                                                            | 现状                                                           | 落地                                                                                                                                                                                                   |
 | --------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `packages/workbench/src/terminal.tsx`                           | 默认 shell 写死 `powershell.exe`                               | 新增后端 `get_default_shell` 命令（Windows→powershell.exe，mac→`$SHELL` 或 `/bin/zsh`），前端经 contracts 层调用；启动链改为同步缓存的 promise 以保持双挂载共享语义                                    |
+| `packages/workbench/src/terminal.tsx`                           | 默认 shell 写死 `powershell.exe`                               | `get_default_shell` 从统一 System Runtime 返回绝对路径、Shell 类型、交互/命令参数和 revision 的 `ShellLaunchSpec`；mac 使用账户登录 Shell，Windows 优先 PowerShell，缺失才降级系统命令解释器。         |
 | `apps/desktop/src-tauri/src/browser_detection.rs`               | 注册表/where.exe 检测，非 Windows 空桩                         | mac：`/Applications` + `~/Applications` 的 `.app` 固定候选；`--version` 探测改为跨平台（creation_flags 仅 cfg(windows)）                                                                               |
 | `browser_settings_commands.rs`、`browser_workspace_commands.rs` | `rundll32`/`explorer` 开 URL/文件夹，非 Windows 报 Unsupported | mac：`open <url>` / `open -R <path>`；linux：`xdg-open`；其余平台仍 Unsupported                                                                                                                        |
 | `apps/desktop/src-tauri/src/main.rs` Skill 目录                 | `USERPROFILE`/`PROGRAMDATA`                                    | mac：`$HOME/.agents/skills` + `/Library/Application Support/Hachimi/skills`                                                                                                                            |
@@ -90,7 +90,7 @@
 - 落地：
   - [x] 新增 `crates/hachimi-process/src/pty/unix_pty.rs`：`portable-pty`（workspace pin `=0.9.0`）建 PTY，读写走 spawn_blocking + mpsc（镜像 ConPTY 控制契约），resize 走 `TIOCSWINSZ`，进程树终止用进程组 `killpg`（child 是 session leader，pgid=pid）；`launcher = Some(..)` 明确报错（沙箱启动器属 P2）。
   - [x] `src/tests.rs` fixture 换成 `sh`/跨平台脚本，4 个测试全部放开 cfg 并在 mac 实测通过（含 Ctrl-C 前台中断、幂等写、resize）。
-  - [ ] `src/lib.rs:202-267` 的 `RestrictedProcessTemp` / `prepare_restricted_environment` 环境变量清单平台化（非沙箱路径已可用；沙箱化执行属 P2）。
+  - [x] ~~`src/lib.rs:202-267` 的 `RestrictedProcessTemp` / `prepare_restricted_environment` 环境变量清单平台化~~（2026-08-30 复核：该函数只在 `restricted_launcher.is_some()` 的 Windows AppContainer 路径触发；mac 沙箱执行走 P2 Seatbelt 后端，`seatbelt.rs` 自行处理 TMPDIR/TEMP/TMP 白名单——此项对 mac 不适用，已被 P2 覆盖）。
 
 ## 7. sherpa-onnx mac 运行时（CPU-only，已完成）
 

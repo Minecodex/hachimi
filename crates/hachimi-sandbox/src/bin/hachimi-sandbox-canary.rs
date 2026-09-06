@@ -6,6 +6,8 @@ fn main() {
     let result = match arguments.as_slice() {
         [operation] if operation == "--ok" => Ok(()),
         [operation] if operation == "--assert-job" => assert_job(),
+        [operation] if operation == "--assert-seatbelt" => assert_seatbelt(),
+        [operation] if operation == "--read-fd3" => read_fd3(),
         [operation, path] if operation == "--touch" => {
             std::fs::write(PathBuf::from(path), b"sandbox canary").map_err(|error| {
                 failure_exit_code = error
@@ -124,4 +126,41 @@ fn write_inherited_handle(_raw_handle: usize) -> Result<(), String> {
 #[cfg(not(windows))]
 fn assert_job() -> Result<(), String> {
     Err("Job Object canary is Windows-only".into())
+}
+
+/// Proves the Seatbelt profile is active: writing to a scratch path outside
+/// every grant must fail. If the write succeeds the process is unsandboxed.
+#[cfg(target_os = "macos")]
+fn assert_seatbelt() -> Result<(), String> {
+    let probe = std::env::temp_dir().join(format!("hachimi-seatbelt-probe-{}", std::process::id()));
+    match std::fs::write(&probe, b"must be denied") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            Err("canary write succeeded outside grants; Seatbelt is not active".into())
+        }
+        // Only a permission denial proves the sandbox; other I/O errors are
+        // inconclusive and must fail the probe.
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(()),
+        Err(error) => Err(format!("seatbelt probe was inconclusive: {error}")),
+    }
+}
+
+/// Proves no unexpected file descriptors leak into the sandboxed child: only
+/// stdio (0/1/2) may be open at entry.
+#[cfg(target_os = "macos")]
+fn read_fd3() -> Result<(), String> {
+    match std::fs::read("/dev/fd/3") {
+        Ok(_) => Err("fd 3 was readable; an unexpected descriptor was inherited".into()),
+        Err(_) => Ok(()),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn assert_seatbelt() -> Result<(), String> {
+    Err("Seatbelt canary is macOS-only".into())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_fd3() -> Result<(), String> {
+    Err("fd inheritance canary is macOS-only".into())
 }

@@ -17,6 +17,7 @@ mod git_alias;
 mod operation;
 mod patch;
 mod review_diff;
+mod system_git;
 mod watch;
 mod worker_io;
 
@@ -43,6 +44,7 @@ use hachimi_sandbox::{
     PathAccess, PathSecurityError, SandboxBackend, SandboxLaunchSpec, SandboxNetworkPolicy,
     resolve_checkout_path, validate_checkout_root,
 };
+use hachimi_system_runtime::GitRuntimeLease;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -56,9 +58,12 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use operation::workspace_operation_effect;
+use system_git::debug_git_executable;
+pub(crate) use system_git::{git_program, restricted_process_cwd};
 
 pub const WORKER_TOKEN_ENV: &str = "HACHIMI_WORKSPACE_WORKER_TOKEN";
 pub const GIT_EXECUTABLE_ENV: &str = "HACHIMI_GIT_EXECUTABLE";
+pub const GIT_RUNTIME_REVISION_ENV: &str = "HACHIMI_GIT_RUNTIME_REVISION";
 const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_PROCESS_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_SEARCH_RESULTS: usize = 200;
@@ -346,6 +351,7 @@ pub enum WorkspaceErrorCode {
     ProcessFailed,
     TimedOut,
     Cancelled,
+    SystemGitChanged,
     HostDisconnected,
     Io,
 }
@@ -397,6 +403,9 @@ pub struct WorkspaceHostClient {
     external_roots: Arc<Vec<PathBuf>>,
     full_filesystem: bool,
     interactive_external_access: bool,
+    git_executable: Option<PathBuf>,
+    git_runtime_revision: u64,
+    git_runtime_lease: Option<GitRuntimeLease>,
 }
 
 impl std::fmt::Debug for WorkspaceHostClient {
@@ -417,6 +426,9 @@ pub struct WorkspaceSandboxContext {
     pub session_id: hachimi_protocol::SessionId,
     pub run_id: hachimi_protocol::RunId,
     pub grants: hachimi_protocol::CapabilityGrantSet,
+    /// True only while a verified Git mutation lease is held: the launch lifts
+    /// the read-only `.git` carve-out inside writable roots.
+    pub git_metadata_writable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -445,6 +457,32 @@ impl WorkspaceHostClient {
         checkout_id: impl Into<String>,
         run_generation: u64,
     ) -> Self {
+        Self::new_with_git_runtime(
+            worker_program,
+            checkout_root,
+            checkout_id,
+            run_generation,
+            None,
+        )
+    }
+
+    /// Binds a Workspace Host to an explicit system-runtime Git lease. The
+    /// lease is immutable for this host, so a refresh only affects new hosts.
+    #[must_use]
+    pub fn new_with_git_runtime(
+        worker_program: impl Into<PathBuf>,
+        checkout_root: impl Into<PathBuf>,
+        checkout_id: impl Into<String>,
+        run_generation: u64,
+        git_runtime_lease: Option<GitRuntimeLease>,
+    ) -> Self {
+        let git_executable = git_runtime_lease
+            .as_ref()
+            .map(|lease| lease.executable().to_owned())
+            .or_else(debug_git_executable);
+        let git_runtime_revision = git_runtime_lease
+            .as_ref()
+            .map_or(0, GitRuntimeLease::revision);
         Self {
             worker_program: worker_program.into(),
             restricted_launcher: None,
@@ -459,6 +497,9 @@ impl WorkspaceHostClient {
             external_roots: Arc::new(Vec::new()),
             full_filesystem: false,
             interactive_external_access: false,
+            git_executable,
+            git_runtime_revision,
+            git_runtime_lease,
         }
     }
 
@@ -504,6 +545,14 @@ impl WorkspaceHostClient {
         self.sandbox_backend = Some(backend);
         self.sandbox_context = Some(context);
         self.launch_guard = Some(launch_guard);
+        self
+    }
+
+    #[must_use]
+    pub fn with_git_metadata_writable(mut self, writable: bool) -> Self {
+        if let Some(context) = self.sandbox_context.as_mut() {
+            context.git_metadata_writable = writable;
+        }
         self
     }
 
@@ -565,6 +614,7 @@ impl WorkspaceHostClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        self.configure_worker_runtime(&mut command)?;
         let mut child = command.spawn().map_err(|error| {
             WorkspaceError::new(WorkspaceErrorCode::HostDisconnected, error.to_string())
         })?;
@@ -701,6 +751,7 @@ impl WorkspaceHostClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        self.configure_worker_runtime(&mut command)?;
         let mut child = command.spawn().map_err(|error| {
             WorkspaceError::new(WorkspaceErrorCode::HostDisconnected, error.to_string())
         })?;
@@ -889,6 +940,7 @@ impl WorkspaceHostClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        self.configure_worker_runtime(&mut command)?;
         let mut child = command.spawn().map_err(|error| {
             WorkspaceError::new(WorkspaceErrorCode::HostDisconnected, error.to_string())
         })?;
@@ -1018,7 +1070,11 @@ impl WorkspaceHostClient {
             WorkspaceError::new(WorkspaceErrorCode::InvalidRequest, error.to_string())
         })?;
         input.push(b'\n');
-        let git_aliases = git_alias::RestrictedGitAliases::for_checkout(&self.checkout_root)?;
+        self.verify_git_runtime()?;
+        let git_aliases = git_alias::RestrictedGitAliases::for_checkout(
+            &self.checkout_root,
+            self.git_executable.as_deref(),
+        )?;
         let worker_root = git_aliases
             .as_ref()
             .map_or(self.checkout_root.as_path(), |aliases| {
@@ -1074,12 +1130,15 @@ impl WorkspaceHostClient {
                 &self.run_temp.path,
                 &self.worker_token,
                 git_aliases.as_ref(),
+                self.git_executable.as_deref(),
+                self.git_runtime_revision,
             )?,
             stdin: Some(input),
             interactive_stdin: false,
             timeout,
             output_limit: 8 * 1024 * 1024,
             network_policy: SandboxNetworkPolicy::DenyAll,
+            git_metadata_writable: context.git_metadata_writable,
         };
         let child = backend
             .spawn_restricted(spec, cancellation)
@@ -1138,6 +1197,28 @@ impl WorkspaceHostClient {
         command
     }
 
+    fn configure_worker_runtime(&self, command: &mut Command) -> Result<(), WorkspaceError> {
+        self.verify_git_runtime()?;
+        if let Some(git) = &self.git_executable {
+            command.env(GIT_EXECUTABLE_ENV, git).env(
+                GIT_RUNTIME_REVISION_ENV,
+                self.git_runtime_revision.to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    fn verify_git_runtime(&self) -> Result<(), WorkspaceError> {
+        self.git_runtime_lease.as_ref().map_or(Ok(()), |lease| {
+            lease.verify().map_err(|error| {
+                WorkspaceError::new(
+                    WorkspaceErrorCode::SystemGitChanged,
+                    format!("{}: {}", error.code, error.message),
+                )
+            })
+        })
+    }
+
     fn prepare_run_temp(&self) -> Result<(), WorkspaceError> {
         std::fs::create_dir_all(&self.run_temp.path).map_err(|error| {
             WorkspaceError::new(
@@ -1179,8 +1260,11 @@ fn restricted_worker_environment(
     run_temp: &Path,
     worker_token: &str,
     git_aliases: Option<&git_alias::RestrictedGitAliases>,
+    git_executable: Option<&Path>,
+    git_runtime_revision: u64,
 ) -> Result<Vec<(std::ffi::OsString, std::ffi::OsString)>, WorkspaceError> {
     let mut environment = Vec::new();
+    #[cfg(windows)]
     for name in [
         "PATH",
         "PATHEXT",
@@ -1195,42 +1279,45 @@ fn restricted_worker_environment(
             environment.push((name.into(), value));
         }
     }
+    #[cfg(not(windows))]
+    for name in [
+        "PATH",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "LANG",
+        "LC_ALL",
+        "TERM",
+        "SSH_AUTH_SOCK",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            environment.push((name.into(), value));
+        }
+    }
     environment.push(("TEMP".into(), run_temp.as_os_str().to_owned()));
     environment.push(("TMP".into(), run_temp.as_os_str().to_owned()));
-    environment.push(("USERPROFILE".into(), run_temp.as_os_str().to_owned()));
-    environment.push(("LOCALAPPDATA".into(), run_temp.as_os_str().to_owned()));
-    environment.push(("APPDATA".into(), run_temp.as_os_str().to_owned()));
+    #[cfg(not(windows))]
+    {
+        environment.push(("TMPDIR".into(), run_temp.as_os_str().to_owned()));
+        environment.push(("HOME".into(), run_temp.as_os_str().to_owned()));
+    }
+    #[cfg(windows)]
+    {
+        environment.push(("USERPROFILE".into(), run_temp.as_os_str().to_owned()));
+        environment.push(("LOCALAPPDATA".into(), run_temp.as_os_str().to_owned()));
+        environment.push(("APPDATA".into(), run_temp.as_os_str().to_owned()));
+    }
     environment.push((WORKER_TOKEN_ENV.into(), worker_token.into()));
-    let git = hachimi_sandbox::trusted_git_executable().map_err(|error| {
-        WorkspaceError::new(
-            WorkspaceErrorCode::HostDisconnected,
-            format!("trusted Git runtime is unavailable: {error}"),
-        )
-    })?;
-    environment.push((GIT_EXECUTABLE_ENV.into(), git.into_os_string()));
+    if let Some(git) = git_executable {
+        environment.push((GIT_EXECUTABLE_ENV.into(), git.as_os_str().to_owned()));
+        environment.push((
+            GIT_RUNTIME_REVISION_ENV.into(),
+            git_runtime_revision.to_string().into(),
+        ));
+    }
     if let Some(git_aliases) = git_aliases {
         git_aliases.append_environment(&mut environment);
     }
     Ok(environment)
-}
-
-pub(crate) fn git_program() -> std::ffi::OsString {
-    std::env::var_os(GIT_EXECUTABLE_ENV).unwrap_or_else(|| "git".into())
-}
-
-pub(crate) fn restricted_process_cwd(fallback: &Path) -> PathBuf {
-    let Some(alias_root) = std::env::var_os(git_alias::GIT_WORK_TREE_ALIAS_ENV).map(PathBuf::from)
-    else {
-        return fallback.to_owned();
-    };
-    let Some(real_root) = std::env::var_os(git_alias::GIT_WORK_TREE_REAL_ENV).map(PathBuf::from)
-    else {
-        return fallback.to_owned();
-    };
-    let Ok(relative) = fallback.strip_prefix(real_root) else {
-        return fallback.to_owned();
-    };
-    alias_root.join(relative)
 }
 
 fn configure_restricted_git_environment(command: &mut Command) {

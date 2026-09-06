@@ -1,10 +1,8 @@
 use std::{
     fs,
     path::{Component, Path, PathBuf},
-    process::Stdio,
 };
 
-use hachimi_process_policy::{ProcessPolicy, tokio_command};
 use hachimi_protocol::{
     CheckoutKind, ExecutionTarget, SessionContextBinding, WorkbenchHandoffRequest,
     WorkbenchHandoffResponse,
@@ -13,11 +11,15 @@ use hachimi_storage::{
     IdempotentMutationClaim, SessionCheckoutBindingUpdate, SessionEnvironmentState,
     WorkbenchHandoffJournalRecord,
 };
+use hachimi_system_runtime::SystemRuntimeManager;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
-use crate::{WorkbenchError, WorkbenchService, git_optional, git_required, now_ms, sha256_text};
+use crate::{
+    WorkbenchError, WorkbenchService, git_optional, git_required, now_ms, sha256_text,
+    system_git::git_required_bytes,
+};
 
 #[derive(Debug)]
 struct CheckoutSnapshot {
@@ -71,6 +73,7 @@ impl WorkbenchService {
         &self,
         journal: &WorkbenchHandoffJournalRecord,
     ) -> Result<(), WorkbenchError> {
+        let runtime = &self.system_runtime;
         let session = self
             .store
             .get_session(&journal.session_id)
@@ -97,21 +100,24 @@ impl WorkbenchService {
             .ok_or_else(|| WorkbenchError::CheckoutNotFound(journal.target_checkout_id.clone()))?;
         let snapshot =
             load_checkout_snapshot(journal, Path::new(&source.path), &self.worktree_root)?;
-        let source_matches = checkout_matches_snapshot(Path::new(&source.path), &snapshot).await?;
+        let source_matches =
+            checkout_matches_snapshot(runtime, Path::new(&source.path), &snapshot).await?;
         let source_is_clean =
-            checkout_is_clean_at(Path::new(&source.path), snapshot.head.as_deref()).await?;
+            checkout_is_clean_at(runtime, Path::new(&source.path), snapshot.head.as_deref())
+                .await?;
         if !source_matches && !source_is_clean {
             return Err(WorkbenchError::HandoffTargetChanged);
         }
         let target_root = Path::new(&target.path);
         let target_is_original = checkout_is_original(
+            runtime,
             target_root,
             journal.target_head.as_deref(),
             journal.target_branch.as_deref(),
             &journal.target_status_fingerprint,
         )
         .await?;
-        let target_is_applied = checkout_matches_snapshot(target_root, &snapshot).await?;
+        let target_is_applied = checkout_matches_snapshot(runtime, target_root, &snapshot).await?;
         if !target_is_original && !target_is_applied {
             return Err(WorkbenchError::HandoffTargetChanged);
         }
@@ -120,6 +126,7 @@ impl WorkbenchService {
         }
         if target_is_applied {
             rollback_target(
+                runtime,
                 &snapshot,
                 target_root,
                 journal.target_head.as_deref(),
@@ -127,9 +134,10 @@ impl WorkbenchService {
             )
             .await?;
         }
-        restore_source(&snapshot).await?;
-        if !checkout_matches_snapshot(Path::new(&source.path), &snapshot).await?
+        restore_source(runtime, &snapshot).await?;
+        if !checkout_matches_snapshot(runtime, Path::new(&source.path), &snapshot).await?
             || !checkout_is_original(
+                runtime,
                 target_root,
                 journal.target_head.as_deref(),
                 journal.target_branch.as_deref(),
@@ -205,6 +213,7 @@ impl WorkbenchService {
         request: &WorkbenchHandoffRequest,
         request_hash: &str,
     ) -> Result<WorkbenchHandoffResponse, WorkbenchError> {
+        let runtime = &self.system_runtime;
         let session = self
             .store
             .get_session(&request.session_id)
@@ -244,8 +253,8 @@ impl WorkbenchService {
             return Err(WorkbenchError::HandoffPreconditionFailed);
         }
         let source_root = Path::new(&source.path);
-        let source_head = git_optional(source_root, &["rev-parse", "HEAD"]).await?;
-        let source_status = status(source_root).await?;
+        let source_head = git_optional(runtime, source_root, &["rev-parse", "HEAD"]).await?;
+        let source_status = status(runtime, source_root).await?;
         if source_head != request.expected_head
             || sha256_text(&source_status) != request.status_fingerprint
         {
@@ -265,11 +274,11 @@ impl WorkbenchService {
             return Err(WorkbenchError::HandoffPreconditionFailed);
         }
         let target_root = Path::new(&target.path);
-        let target_status = status(target_root).await?;
+        let target_status = status(runtime, target_root).await?;
         if !target_status.is_empty() {
             return Err(WorkbenchError::HandoffTargetChanged);
         }
-        let target_head = git_optional(target_root, &["rev-parse", "HEAD"]).await?;
+        let target_head = git_optional(runtime, target_root, &["rev-parse", "HEAD"]).await?;
         let target_status_fingerprint = sha256_text(&target_status);
         if state.inactive_head.is_some()
             && (state.inactive_head != target_head
@@ -278,7 +287,7 @@ impl WorkbenchService {
         {
             return Err(WorkbenchError::HandoffTargetChanged);
         }
-        let target_branch = branch(target_root).await?;
+        let target_branch = branch(runtime, target_root).await?;
         let snapshot_root = self
             .worktree_root
             .join("handoffs")
@@ -288,8 +297,8 @@ impl WorkbenchService {
             fs::remove_dir_all(&snapshot_root).map_err(WorkbenchError::Io)?;
         }
         fs::create_dir_all(&snapshot_root).map_err(WorkbenchError::Io)?;
-        let snapshot = capture_checkout(source_root, &snapshot_root, source.kind).await?;
-        verify_snapshot_rebuild(source_root, &snapshot).await?;
+        let snapshot = capture_checkout(runtime, source_root, &snapshot_root, source.kind).await?;
+        verify_snapshot_rebuild(runtime, source_root, &snapshot).await?;
         let journal_id = format!("handoff-{}", &request_hash[..32]);
         self.store
             .start_workbench_handoff_journal(
@@ -314,7 +323,7 @@ impl WorkbenchService {
             && target.kind == CheckoutKind::Local
             && snapshot.branch.is_some()
         {
-            git_required(source_root, &["switch", "--detach"], None).await?;
+            git_required(runtime, source_root, &["switch", "--detach"], None).await?;
             true
         } else {
             false
@@ -330,6 +339,7 @@ impl WorkbenchService {
             .await;
         if let Err(error) = apply_result {
             let _ = rollback_target(
+                runtime,
                 &snapshot,
                 target_root,
                 target_head.as_deref(),
@@ -337,7 +347,7 @@ impl WorkbenchService {
             )
             .await;
             if released_source_branch {
-                let _ = restore_source(&snapshot).await;
+                let _ = restore_source(runtime, &snapshot).await;
             }
             self.store
                 .update_workbench_handoff_phase(
@@ -351,8 +361,9 @@ impl WorkbenchService {
         self.store
             .update_workbench_handoff_phase(&journal_id, "destination_applied", None)
             .await?;
-        if status(target_root).await? != snapshot.status {
+        if status(runtime, target_root).await? != snapshot.status {
             let _ = rollback_target(
+                runtime,
                 &snapshot,
                 target_root,
                 target_head.as_deref(),
@@ -360,7 +371,7 @@ impl WorkbenchService {
             )
             .await;
             if released_source_branch {
-                let _ = restore_source(&snapshot).await;
+                let _ = restore_source(runtime, &snapshot).await;
             }
             self.store
                 .update_workbench_handoff_phase(
@@ -373,15 +384,16 @@ impl WorkbenchService {
                 "destination verification failed".into(),
             ));
         }
-        if let Err(error) = clean_source(source_root).await {
+        if let Err(error) = clean_source(runtime, source_root).await {
             let _ = rollback_target(
+                runtime,
                 &snapshot,
                 target_root,
                 target_head.as_deref(),
                 target_branch.as_deref(),
             )
             .await;
-            let _ = restore_source(&snapshot).await;
+            let _ = restore_source(runtime, &snapshot).await;
             self.store
                 .update_workbench_handoff_phase(
                     &journal_id,
@@ -394,7 +406,7 @@ impl WorkbenchService {
         self.store
             .update_workbench_handoff_phase(&journal_id, "source_cleaned", None)
             .await?;
-        let clean_source_status = status(source_root).await?;
+        let clean_source_status = status(runtime, source_root).await?;
         let binding_update = SessionCheckoutBindingUpdate {
             session_id: session.id.clone(),
             project_id,
@@ -409,13 +421,14 @@ impl WorkbenchService {
             Ok(value) => value,
             Err(error) => {
                 let _ = rollback_target(
+                    runtime,
                     &snapshot,
                     target_root,
                     target_head.as_deref(),
                     target_branch.as_deref(),
                 )
                 .await;
-                let _ = restore_source(&snapshot).await;
+                let _ = restore_source(runtime, &snapshot).await;
                 self.store
                     .update_workbench_handoff_phase(
                         &journal_id,
@@ -478,6 +491,7 @@ impl WorkbenchService {
         target_head: Option<&str>,
         _target_branch: Option<&str>,
     ) -> Result<(), WorkbenchError> {
+        let runtime = &self.system_runtime;
         let source_head = snapshot
             .head
             .as_deref()
@@ -497,12 +511,19 @@ impl WorkbenchService {
             serde_json::to_vec(&copied_ignored)?,
         )?;
         if source.kind == CheckoutKind::Local {
-            git_required(target_root, &["switch", "--detach", source_head], None).await?;
+            git_required(
+                runtime,
+                target_root,
+                &["switch", "--detach", source_head],
+                None,
+            )
+            .await?;
         } else if let Some(source_branch) = snapshot.branch.as_deref() {
-            git_required(target_root, &["switch", source_branch], None).await?;
+            git_required(runtime, target_root, &["switch", source_branch], None).await?;
         } else {
             let target_head = target_head.ok_or(WorkbenchError::HandoffHistoryDiverged)?;
             if git_required(
+                runtime,
                 target_root,
                 &["merge-base", "--is-ancestor", target_head, source_head],
                 None,
@@ -512,12 +533,24 @@ impl WorkbenchService {
             {
                 return Err(WorkbenchError::HandoffHistoryDiverged);
             }
-            git_required(target_root, &["merge", "--ff-only", source_head], None).await?;
+            git_required(
+                runtime,
+                target_root,
+                &["merge", "--ff-only", source_head],
+                None,
+            )
+            .await?;
         }
-        git_required(target_root, &["reset", "--hard", source_head], None).await?;
-        git_required(target_root, &["clean", "-fd"], None).await?;
-        apply_patch_file(target_root, &snapshot.staged_patch, true).await?;
-        apply_patch_file(target_root, &snapshot.unstaged_patch, false).await?;
+        git_required(
+            runtime,
+            target_root,
+            &["reset", "--hard", source_head],
+            None,
+        )
+        .await?;
+        git_required(runtime, target_root, &["clean", "-fd"], None).await?;
+        apply_patch_file(runtime, target_root, &snapshot.staged_patch, true).await?;
+        apply_patch_file(runtime, target_root, &snapshot.unstaged_patch, false).await?;
         copy_snapshot_files(
             &snapshot.untracked_root,
             target_root,
@@ -537,25 +570,32 @@ impl WorkbenchService {
 }
 
 async fn capture_checkout(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     snapshot_root: &Path,
     kind: CheckoutKind,
 ) -> Result<CheckoutSnapshot, WorkbenchError> {
-    let head = git_optional(root, &["rev-parse", "HEAD"]).await?;
-    let branch = branch(root).await?;
-    let status = status(root).await?;
+    let head = git_optional(runtime, root, &["rev-parse", "HEAD"]).await?;
+    let branch = branch(runtime, root).await?;
+    let status = status(runtime, root).await?;
     let staged_patch = snapshot_root.join("staged.patch");
     let unstaged_patch = snapshot_root.join("unstaged.patch");
     fs::write(
         &staged_patch,
-        git_patch(root, &["diff", "--cached", "--binary", "HEAD", "--"]).await?,
+        git_patch(
+            runtime,
+            root,
+            &["diff", "--cached", "--binary", "HEAD", "--"],
+        )
+        .await?,
     )?;
     fs::write(
         &unstaged_patch,
-        git_patch(root, &["diff", "--binary", "--"]).await?,
+        git_patch(runtime, root, &["diff", "--binary", "--"]).await?,
     )?;
     let untracked = nul_paths(
         &git_required(
+            runtime,
             root,
             &["ls-files", "--others", "--exclude-standard", "-z"],
             None,
@@ -563,7 +603,7 @@ async fn capture_checkout(
         .await?,
     )?;
     let included_ignored = if kind == CheckoutKind::Local {
-        included_ignored_paths(root).await?
+        included_ignored_paths(runtime, root).await?
     } else {
         Vec::new()
     };
@@ -603,6 +643,7 @@ async fn capture_checkout(
 }
 
 async fn verify_snapshot_rebuild(
+    runtime: &SystemRuntimeManager,
     repository_root: &Path,
     snapshot: &CheckoutSnapshot,
 ) -> Result<(), WorkbenchError> {
@@ -617,6 +658,7 @@ async fn verify_snapshot_rebuild(
     let verification_root = snapshot_root.join("verification-worktree");
     let verification_path = verification_root.to_string_lossy().into_owned();
     git_required(
+        runtime,
         repository_root,
         &[
             "worktree",
@@ -630,8 +672,8 @@ async fn verify_snapshot_rebuild(
     .await?;
 
     let verification = async {
-        apply_patch_file(&verification_root, &snapshot.staged_patch, true).await?;
-        apply_patch_file(&verification_root, &snapshot.unstaged_patch, false).await?;
+        apply_patch_file(runtime, &verification_root, &snapshot.staged_patch, true).await?;
+        apply_patch_file(runtime, &verification_root, &snapshot.unstaged_patch, false).await?;
         copy_snapshot_files(
             &snapshot.untracked_root,
             &verification_root,
@@ -644,7 +686,7 @@ async fn verify_snapshot_rebuild(
             &snapshot.included_ignored,
             false,
         )?;
-        if !checkout_matches_snapshot(&verification_root, snapshot).await? {
+        if !checkout_matches_snapshot(runtime, &verification_root, snapshot).await? {
             return Err(WorkbenchError::HandoffFailed(
                 "temporary worktree could not reproduce the checkout snapshot".into(),
             ));
@@ -653,6 +695,7 @@ async fn verify_snapshot_rebuild(
     }
     .await;
     let cleanup = git_required(
+        runtime,
         repository_root,
         &["worktree", "remove", "--force", verification_path.as_str()],
         None,
@@ -711,20 +754,27 @@ fn load_checkout_snapshot(
 }
 
 async fn checkout_matches_snapshot(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     snapshot: &CheckoutSnapshot,
 ) -> Result<bool, WorkbenchError> {
-    if git_optional(root, &["rev-parse", "HEAD"]).await? != snapshot.head
-        || status(root).await? != snapshot.status
-        || git_patch(root, &["diff", "--cached", "--binary", "HEAD", "--"]).await?
+    if git_optional(runtime, root, &["rev-parse", "HEAD"]).await? != snapshot.head
+        || status(runtime, root).await? != snapshot.status
+        || git_patch(
+            runtime,
+            root,
+            &["diff", "--cached", "--binary", "HEAD", "--"],
+        )
+        .await?
             != fs::read(&snapshot.staged_patch)?
-        || git_patch(root, &["diff", "--binary", "--"]).await?
+        || git_patch(runtime, root, &["diff", "--binary", "--"]).await?
             != fs::read(&snapshot.unstaged_patch)?
     {
         return Ok(false);
     }
     let current_untracked = nul_paths(
         &git_required(
+            runtime,
             root,
             &["ls-files", "--others", "--exclude-standard", "-z"],
             None,
@@ -745,32 +795,40 @@ async fn checkout_matches_snapshot(
 }
 
 async fn checkout_is_original(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     expected_head: Option<&str>,
     expected_branch: Option<&str>,
     expected_status_fingerprint: &str,
 ) -> Result<bool, WorkbenchError> {
-    Ok(
-        git_optional(root, &["rev-parse", "HEAD"]).await?.as_deref() == expected_head
-            && branch(root).await?.as_deref() == expected_branch
-            && sha256_text(&status(root).await?) == expected_status_fingerprint,
-    )
+    Ok(git_optional(runtime, root, &["rev-parse", "HEAD"])
+        .await?
+        .as_deref()
+        == expected_head
+        && branch(runtime, root).await?.as_deref() == expected_branch
+        && sha256_text(&status(runtime, root).await?) == expected_status_fingerprint)
 }
 
 async fn checkout_is_clean_at(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     expected_head: Option<&str>,
 ) -> Result<bool, WorkbenchError> {
-    Ok(
-        git_optional(root, &["rev-parse", "HEAD"]).await?.as_deref() == expected_head
-            && status(root).await?.is_empty(),
-    )
+    Ok(git_optional(runtime, root, &["rev-parse", "HEAD"])
+        .await?
+        .as_deref()
+        == expected_head
+        && status(runtime, root).await?.is_empty())
 }
 
-async fn included_ignored_paths(root: &Path) -> Result<Vec<String>, WorkbenchError> {
+async fn included_ignored_paths(
+    runtime: &SystemRuntimeManager,
+    root: &Path,
+) -> Result<Vec<String>, WorkbenchError> {
     let include = root.join(".worktreeinclude");
     let ignored = nul_paths(
         &git_required(
+            runtime,
             root,
             &[
                 "ls-files",
@@ -789,6 +847,7 @@ async fn included_ignored_paths(root: &Path) -> Result<Vec<String>, WorkbenchErr
     let mut included = if include.is_file() {
         nul_paths(
             &git_required(
+                runtime,
                 root,
                 &[
                     "ls-files",
@@ -813,17 +872,20 @@ async fn included_ignored_paths(root: &Path) -> Result<Vec<String>, WorkbenchErr
     Ok(included)
 }
 
-async fn restore_source(snapshot: &CheckoutSnapshot) -> Result<(), WorkbenchError> {
+async fn restore_source(
+    runtime: &SystemRuntimeManager,
+    snapshot: &CheckoutSnapshot,
+) -> Result<(), WorkbenchError> {
     if let Some(branch) = snapshot.branch.as_deref() {
-        git_required(&snapshot.root, &["switch", branch], None).await?;
+        git_required(runtime, &snapshot.root, &["switch", branch], None).await?;
     } else if let Some(head) = snapshot.head.as_deref() {
-        git_required(&snapshot.root, &["switch", "--detach", head], None).await?;
+        git_required(runtime, &snapshot.root, &["switch", "--detach", head], None).await?;
     }
     if let Some(head) = snapshot.head.as_deref() {
-        git_required(&snapshot.root, &["reset", "--hard", head], None).await?;
+        git_required(runtime, &snapshot.root, &["reset", "--hard", head], None).await?;
     }
-    apply_patch_file(&snapshot.root, &snapshot.staged_patch, true).await?;
-    apply_patch_file(&snapshot.root, &snapshot.unstaged_patch, false).await?;
+    apply_patch_file(runtime, &snapshot.root, &snapshot.staged_patch, true).await?;
+    apply_patch_file(runtime, &snapshot.root, &snapshot.unstaged_patch, false).await?;
     copy_snapshot_files(
         &snapshot.untracked_root,
         &snapshot.root,
@@ -834,30 +896,32 @@ async fn restore_source(snapshot: &CheckoutSnapshot) -> Result<(), WorkbenchErro
 }
 
 async fn restore_target(
+    runtime: &SystemRuntimeManager,
     root: &Path,
     head: Option<&str>,
     branch: Option<&str>,
 ) -> Result<(), WorkbenchError> {
-    git_required(root, &["clean", "-fd"], None).await?;
+    git_required(runtime, root, &["clean", "-fd"], None).await?;
     if let Some(branch) = branch {
-        git_required(root, &["switch", branch], None).await?;
+        git_required(runtime, root, &["switch", branch], None).await?;
     } else if let Some(head) = head {
-        git_required(root, &["switch", "--detach", head], None).await?;
+        git_required(runtime, root, &["switch", "--detach", head], None).await?;
     }
     if let Some(head) = head {
-        git_required(root, &["reset", "--hard", head], None).await?;
+        git_required(runtime, root, &["reset", "--hard", head], None).await?;
     }
     Ok(())
 }
 
 async fn rollback_target(
+    runtime: &SystemRuntimeManager,
     snapshot: &CheckoutSnapshot,
     root: &Path,
     head: Option<&str>,
     branch: Option<&str>,
 ) -> Result<(), WorkbenchError> {
     remove_copied_ignored(snapshot, root)?;
-    restore_target(root, head, branch).await
+    restore_target(runtime, root, head, branch).await
 }
 
 fn remove_copied_ignored(
@@ -884,32 +948,39 @@ fn remove_copied_ignored(
     Ok(())
 }
 
-async fn clean_source(root: &Path) -> Result<(), WorkbenchError> {
-    git_required(root, &["reset", "--hard", "HEAD"], None).await?;
-    git_required(root, &["clean", "-fd"], None).await?;
+async fn clean_source(runtime: &SystemRuntimeManager, root: &Path) -> Result<(), WorkbenchError> {
+    git_required(runtime, root, &["reset", "--hard", "HEAD"], None).await?;
+    git_required(runtime, root, &["clean", "-fd"], None).await?;
     Ok(())
 }
 
-async fn apply_patch_file(root: &Path, patch: &Path, index: bool) -> Result<(), WorkbenchError> {
+async fn apply_patch_file(
+    runtime: &SystemRuntimeManager,
+    root: &Path,
+    patch: &Path,
+    index: bool,
+) -> Result<(), WorkbenchError> {
     if fs::metadata(patch).map_or(true, |metadata| metadata.len() == 0) {
         return Ok(());
     }
     let patch = patch.to_string_lossy();
     if index {
         git_required(
+            runtime,
             root,
             &["apply", "--index", "--binary", patch.as_ref()],
             None,
         )
         .await?;
     } else {
-        git_required(root, &["apply", "--binary", patch.as_ref()], None).await?;
+        git_required(runtime, root, &["apply", "--binary", patch.as_ref()], None).await?;
     }
     Ok(())
 }
 
-async fn status(root: &Path) -> Result<String, WorkbenchError> {
+async fn status(runtime: &SystemRuntimeManager, root: &Path) -> Result<String, WorkbenchError> {
     git_required(
+        runtime,
         root,
         &[
             "status",
@@ -923,37 +994,26 @@ async fn status(root: &Path) -> Result<String, WorkbenchError> {
     .await
 }
 
-async fn git_patch(root: &Path, args: &[&str]) -> Result<Vec<u8>, WorkbenchError> {
-    let output = tokio_command("git", ProcessPolicy::HiddenCaptured)
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|error| WorkbenchError::Git(error.to_string()))?;
-    if !output.status.success() {
-        return Err(WorkbenchError::Git(
-            String::from_utf8_lossy(&output.stderr)
-                .trim()
-                .chars()
-                .take(1_024)
-                .collect(),
-        ));
-    }
-    Ok(output.stdout)
+async fn git_patch(
+    runtime: &SystemRuntimeManager,
+    root: &Path,
+    args: &[&str],
+) -> Result<Vec<u8>, WorkbenchError> {
+    git_required_bytes(runtime, root, args).await
 }
 
-async fn branch(root: &Path) -> Result<Option<String>, WorkbenchError> {
-    Ok(
-        git_optional(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
-            .await?
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty()),
+async fn branch(
+    runtime: &SystemRuntimeManager,
+    root: &Path,
+) -> Result<Option<String>, WorkbenchError> {
+    Ok(git_optional(
+        runtime,
+        root,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
     )
+    .await?
+    .map(|value| value.trim().to_owned())
+    .filter(|value| !value.is_empty()))
 }
 
 fn nul_paths(value: &str) -> Result<Vec<String>, WorkbenchError> {
@@ -1082,7 +1142,12 @@ mod tests {
         let store = AgentStore::connect_in_memory().await.expect("store");
         let worktrees = tempfile::tempdir().expect("worktrees");
         let attachments = tempfile::tempdir().expect("attachments");
-        let service = WorkbenchService::new(store, worktrees.path(), attachments.path());
+        let service = WorkbenchService::new(
+            store,
+            worktrees.path(),
+            attachments.path(),
+            SystemRuntimeManager::new(),
+        );
         let project = service
             .add_project(repository.path())
             .await
@@ -1203,7 +1268,12 @@ mod tests {
             fs::read_to_string(managed_root.join("cache/settings.json")).expect("copied ignored"),
             "{\"local\":true}\n"
         );
-        assert!(status(local_root).await.expect("local status").is_empty());
+        assert!(
+            status(&fixture.service.system_runtime, local_root)
+                .await
+                .expect("local status")
+                .is_empty()
+        );
         assert!(local_root.join("cache/settings.json").is_file());
 
         let to_local = fixture
@@ -1303,11 +1373,19 @@ mod tests {
             .await
             .expect("target");
         let target_root = Path::new(&target.path);
-        let target_head = git_optional(target_root, &["rev-parse", "HEAD"])
+        let target_head = git_optional(
+            &fixture.service.system_runtime,
+            target_root,
+            &["rev-parse", "HEAD"],
+        )
+        .await
+        .expect("target head");
+        let target_branch = branch(&fixture.service.system_runtime, target_root)
             .await
-            .expect("target head");
-        let target_branch = branch(target_root).await.expect("target branch");
-        let target_status = status(target_root).await.expect("target status");
+            .expect("target branch");
+        let target_status = status(&fixture.service.system_runtime, target_root)
+            .await
+            .expect("target status");
         let snapshot_root = fixture
             .service
             .worktree_root
@@ -1315,10 +1393,15 @@ mod tests {
             .join(fixture.session_id.as_str())
             .join("reconciliation-test");
         fs::create_dir_all(&snapshot_root).expect("snapshot root");
-        let snapshot = capture_checkout(source_root, &snapshot_root, source.kind)
-            .await
-            .expect("capture");
-        verify_snapshot_rebuild(source_root, &snapshot)
+        let snapshot = capture_checkout(
+            &fixture.service.system_runtime,
+            source_root,
+            &snapshot_root,
+            source.kind,
+        )
+        .await
+        .expect("capture");
+        verify_snapshot_rebuild(&fixture.service.system_runtime, source_root, &snapshot)
             .await
             .expect("verify snapshot");
         fixture
@@ -1373,12 +1456,13 @@ mod tests {
             1
         );
         assert!(
-            checkout_matches_snapshot(source_root, &snapshot)
+            checkout_matches_snapshot(&fixture.service.system_runtime, source_root, &snapshot)
                 .await
                 .expect("source restored")
         );
         assert!(
             checkout_is_original(
+                &fixture.service.system_runtime,
                 target_root,
                 target_head.as_deref(),
                 target_branch.as_deref(),

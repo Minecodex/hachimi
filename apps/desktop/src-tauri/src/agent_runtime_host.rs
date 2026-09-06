@@ -320,6 +320,7 @@ pub(super) struct DesktopAgentRunPreparer {
     skills: hachimi_skills::SkillHost,
     mcp: McpControlService,
     sandbox_backend: Option<Arc<dyn SandboxBackend>>,
+    system_runtime: hachimi_system_runtime::SystemRuntimeManager,
     browser: Arc<hachimi_browser::BrowserHost>,
     embedded_browser: Arc<crate::embedded_browser_agent::EmbeddedAgentBrowser>,
     computer: Arc<hachimi_computer::ComputerHost>,
@@ -340,6 +341,7 @@ pub(super) struct DesktopAgentRunDependencies {
     pub(super) skills: hachimi_skills::SkillHost,
     pub(super) mcp: McpControlService,
     pub(super) sandbox_backend: Option<Arc<dyn SandboxBackend>>,
+    pub(super) system_runtime: hachimi_system_runtime::SystemRuntimeManager,
     pub(super) browser: Arc<hachimi_browser::BrowserHost>,
     pub(super) embedded_browser: Arc<crate::embedded_browser_agent::EmbeddedAgentBrowser>,
     pub(super) computer: Arc<hachimi_computer::ComputerHost>,
@@ -362,6 +364,7 @@ impl DesktopAgentRunPreparer {
             skills,
             mcp,
             sandbox_backend,
+            system_runtime,
             browser,
             embedded_browser,
             computer,
@@ -381,6 +384,7 @@ impl DesktopAgentRunPreparer {
             skills,
             mcp,
             sandbox_backend,
+            system_runtime,
             browser,
             embedded_browser,
             computer,
@@ -573,11 +577,16 @@ impl DesktopAgentRunPreparer {
             .await
             .map_err(AgentExecutionError::Store)?;
         let worker_program = workspace_worker_path();
-        let mut workspace_host = WorkspaceHostClient::new(
+        let git = self
+            .system_runtime
+            .require_git(hachimi_protocol::SystemToolCapability::GitInspect)
+            .ok();
+        let mut workspace_host = WorkspaceHostClient::new_with_git_runtime(
             &worker_program,
             &checkout.path,
             checkout.id.as_str(),
             request.run.generation,
+            git.clone(),
         )
         .with_external_roots(authorized_workspace_roots(
             &request,
@@ -597,6 +606,8 @@ impl DesktopAgentRunPreparer {
                 Path::new(&checkout.path),
                 workspace_host.run_temp_dir(),
                 &worker_program,
+                git.as_ref()
+                    .map(hachimi_system_runtime::GitRuntimeLease::executable),
             )
             .map_err(|error| AgentExecutionError::Preparation(error.to_string()))?;
             prepare_authorized_root_acls(&request, Path::new(&checkout.path), &mut read_only_roots)
@@ -621,6 +632,7 @@ impl DesktopAgentRunPreparer {
                     session_id: request.session.id.clone(),
                     run_id: request.run.id.clone(),
                     grants: request.capability_grants.clone(),
+                    git_metadata_writable: false,
                 },
                 Arc::new(StoreWorkspaceLaunchGuard {
                     store: self.store.clone(),
@@ -871,11 +883,16 @@ impl DesktopAgentRunPreparer {
         );
         let mcp_bindings = mcp_runtime_bindings(&mcp_runtimes);
         let worker_program = workspace_worker_path();
-        let mut workspace_host = WorkspaceHostClient::new(
+        let git = self
+            .system_runtime
+            .require_git(hachimi_protocol::SystemToolCapability::GitInspect)
+            .ok();
+        let mut workspace_host = WorkspaceHostClient::new_with_git_runtime(
             &worker_program,
             &workspace_root,
             &workspace_id,
             request.run.generation,
+            git.clone(),
         )
         .with_external_roots(authorized_workspace_roots(&request, &workspace_root))
         .with_full_filesystem(request.authority.policy.level == PermissionProfile::FullAccess)
@@ -892,6 +909,8 @@ impl DesktopAgentRunPreparer {
                 &workspace_root,
                 workspace_host.run_temp_dir(),
                 &worker_program,
+                git.as_ref()
+                    .map(hachimi_system_runtime::GitRuntimeLease::executable),
             )
             .map_err(|error| AgentExecutionError::Preparation(error.to_string()))?;
             prepare_authorized_root_acls(&request, &workspace_root, &mut read_only_roots)
@@ -916,6 +935,7 @@ impl DesktopAgentRunPreparer {
                     session_id: request.session.id.clone(),
                     run_id: request.run.id.clone(),
                     grants: request.capability_grants.clone(),
+                    git_metadata_writable: false,
                 },
                 Arc::new(StoreWorkspaceLaunchGuard {
                     store: self.store.clone(),

@@ -73,6 +73,22 @@ for (const file of listed) {
       `${normalized}: hard-codes the control protocol version instead of using the generated contract`,
     );
   }
+  if (
+    normalized.endsWith(".rs") &&
+    !normalized.includes("/tests/") &&
+    !normalized.endsWith("_test.rs")
+  ) {
+    const productionContents = contents.split("#[cfg(test)]", 1)[0] ?? contents;
+    if (
+      /(?:Command|StdCommand)::new\s*\(\s*"git"|tokio_command\s*\(\s*"git"/u.test(
+        productionContents,
+      )
+    ) {
+      failures.push(
+        `${normalized}: launches bare git instead of a verified absolute system-runtime path`,
+      );
+    }
+  }
   if ([".rs", ".ts", ".tsx", ".css"].includes(extname(normalized))) {
     const lines = contents.split(/\r?\n/u).length;
     if (lines > 2000) failures.push(`${normalized}: ${lines} lines exceeds the 2000-line limit`);

@@ -10,6 +10,7 @@ base64.workspace = true
 hachimi-protocol.workspace = true
 hachimi-process-policy.workspace = true
 hachimi-sandbox.workspace = true
+hachimi-system-runtime.workspace = true
 parking_lot.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -31,5 +32,6 @@ test = false
 
 [dev-dependencies]
 hachimi-agent.workspace = true
+sha2.workspace = true
 hachimi-protocol.workspace = true
 tempfile.workspace = true

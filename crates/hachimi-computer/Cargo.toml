@@ -41,3 +41,31 @@ windows = { workspace = true, features = [
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = [
+  "NSArray",
+  "NSDictionary",
+  "NSGeometry",
+  "NSProcessInfo",
+  "NSString",
+  "NSURL",
+] }
+objc2-app-kit = { workspace = true, features = [
+  "NSBitmapImageRep",
+  "NSImage",
+  "NSRunningApplication",
+  "NSWorkspace",
+  "NSApplication",
+  "NSWindow",
+  "NSView",
+  "NSControl",
+  "NSTextField",
+] }
+objc2-core-graphics.workspace = true
+block2.workspace = true
+objc2-screen-capture-kit = { workspace = true, features = ["SCScreenshotManager", "SCShareableContent", "SCStream", "block2", "objc2-core-foundation", "objc2-core-graphics"] }
+core-graphics.workspace = true
+core-foundation.workspace = true
+libc.workspace = true

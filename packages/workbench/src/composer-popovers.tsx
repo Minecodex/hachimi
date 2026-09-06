@@ -99,17 +99,28 @@ export function ComposerContextControls(
     baseRevision: string;
     gitSnapshot: ProjectGitSnapshot | undefined;
     gitLoading: boolean;
+    gitInspectReady?: boolean;
+    gitMutationReady?: boolean;
+    gitWorktreeReady?: boolean;
+    gitRuntimeReason?: string | undefined;
     onSelectProject: (projectId: string) => void;
     onSelectExecution: (kind: "local" | "managed_worktree") => void;
     onSelectBranch: (revision: string) => void;
     onRefreshGit: () => void;
+    onRefreshGitRuntime?: () => void;
     onCreateInitialCommit: () => void;
   },
 ) {
   const i18n = useI18n();
   const copy = (zh: string, en: string) => (i18n.locale() === "zh-CN" ? zh : en);
-  const worktreeAvailable = () => props.gitSnapshot?.state.kind === "ready";
+  const worktreeAvailable = () =>
+    props.gitWorktreeReady !== false && props.gitSnapshot?.state.kind === "ready";
   const gitLabel = () => {
+    if (props.gitInspectReady === false)
+      return copy(
+        `Git 不可用 · ${props.gitRuntimeReason ?? "system_git_missing"}`,
+        `Git unavailable · ${props.gitRuntimeReason ?? "system_git_missing"}`,
+      );
     const state = props.gitSnapshot?.state;
     if (!state) return copy("正在检查 Git…", "Inspecting Git…");
     if (state.kind === "not_repository") return copy("非 Git 项目", "Not a Git project");
@@ -192,7 +203,14 @@ export function ComposerContextControls(
           <MenuRow
             icon={<GitFork size={18} />}
             label={i18n.t("workbench.executionWorktree")}
-            description={i18n.t("workbench.executionWorktreeDescription")}
+            description={
+              props.gitWorktreeReady === false
+                ? copy(
+                    `系统 Git 尚未就绪：${props.gitRuntimeReason ?? "system_git_capability_missing"}`,
+                    `System Git is not ready: ${props.gitRuntimeReason ?? "system_git_capability_missing"}`,
+                  )
+                : i18n.t("workbench.executionWorktreeDescription")
+            }
             selected={props.executionKind === "managed_worktree"}
             disabled={!worktreeAvailable()}
             testId="workbench-execution-worktree"
@@ -208,15 +226,46 @@ export function ComposerContextControls(
         <div class="composer-git-state" data-testid="workbench-project-git-state">
           <GitBranch size={15} aria-hidden="true" />
           <span>{gitLabel()}</span>
-          <Show when={props.gitSnapshot?.state.kind === "unborn"}>
+          <Show
+            when={
+              props.gitSnapshot?.state.kind === "unborn" ||
+              (props.selectedProject !== undefined && props.gitInspectReady === false)
+            }
+          >
             <Button
               type="button"
               variant="ghost"
               size="small"
+              disabled={props.gitMutationReady === false}
+              title={
+                props.gitMutationReady === false
+                  ? copy(
+                      `系统 Git 尚未就绪：${props.gitRuntimeReason ?? "system_git_missing"}`,
+                      `System Git is not ready: ${props.gitRuntimeReason ?? "system_git_missing"}`,
+                    )
+                  : undefined
+              }
               data-testid="project-git-create-initial"
               onClick={props.onCreateInitialCommit}
             >
               {copy("创建首提", "Create initial commit")}
+            </Button>
+          </Show>
+          <Show
+            when={
+              props.gitInspectReady === false ||
+              props.gitMutationReady === false ||
+              props.gitWorktreeReady === false
+            }
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="small"
+              data-testid="system-git-refresh"
+              onClick={props.onRefreshGitRuntime}
+            >
+              {copy("重新检测", "Detect again")}
             </Button>
           </Show>
           <Button
@@ -224,7 +273,7 @@ export function ComposerContextControls(
             variant="ghost"
             size="small"
             aria-label={copy("刷新 Git 状态", "Refresh Git status")}
-            disabled={props.gitLoading || !props.selectedProject}
+            disabled={props.gitLoading || !props.selectedProject || props.gitInspectReady === false}
             onClick={props.onRefreshGit}
           >
             <RefreshCw size={14} classList={{ "is-spinning": props.gitLoading }} />

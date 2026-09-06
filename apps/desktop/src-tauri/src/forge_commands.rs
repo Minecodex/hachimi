@@ -79,13 +79,21 @@ fn require_current_run(
     }
 }
 
-fn workspace_host(workspace: &ResolvedWorkspace) -> WorkspaceHostClient {
-    WorkspaceHostClient::new(
+fn workspace_host(
+    state: &DesktopState,
+    workspace: &ResolvedWorkspace,
+) -> Result<WorkspaceHostClient, CommandError> {
+    let git = state
+        .system_runtime
+        .require_git(hachimi_protocol::SystemToolCapability::GitInspect)
+        .map_err(|error| CommandError::new(error.code, error.message))?;
+    Ok(WorkspaceHostClient::new_with_git_runtime(
         workspace_worker_path(),
         &workspace.checkout.path,
         workspace.checkout.id.as_str(),
         workspace.run.generation,
-    )
+        Some(git),
+    ))
 }
 
 #[tauri::command]
@@ -97,9 +105,12 @@ pub(super) async fn list_git_remotes(
     authorize(&window, &state)?;
     let workspace =
         resolve_session_workspace(&state, &request.session_id, &request.checkout_id).await?;
-    crate::git_forge_host::list_git_remotes(&workspace_host(&workspace), CancellationToken::new())
-        .await
-        .map_err(host_error)
+    crate::git_forge_host::list_git_remotes(
+        &workspace_host(&state, &workspace)?,
+        CancellationToken::new(),
+    )
+    .await
+    .map_err(host_error)
 }
 
 #[tauri::command]
@@ -170,7 +181,7 @@ pub(super) async fn push_git_remote(
         .await
         .map_err(|error| CommandError::operation("git_push_dispatch_claim_failed", error))?;
     let output = crate::git_forge_host::push_git_remote(
-        &workspace_host(&workspace),
+        &workspace_host(&state, &workspace)?,
         crate::git_forge_host::GitPushSpec {
             remote_name: request.remote_name,
             expected_remote_url_hash: request.expected_remote_url_hash,
@@ -223,7 +234,7 @@ pub(super) async fn mutate_forge_change(
         resolve_session_workspace(&state, &request.session_id, &request.checkout_id).await?;
     require_current_run(&workspace, &run_id, generation)?;
     let repository = crate::git_forge_host::resolve_forge_repository_by_hash(
-        &workspace_host(&workspace),
+        &workspace_host(&state, &workspace)?,
         &request.repository.remote_url_hash,
         CancellationToken::new(),
     )

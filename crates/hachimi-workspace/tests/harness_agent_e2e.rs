@@ -73,6 +73,9 @@ impl ApprovalBroker for ApproveExactParameters {
 
 #[tokio::test]
 async fn mock_provider_drives_real_worker_and_persists_evidence_across_restart() {
+    hachimi_system_runtime::system_runtime_manager()
+        .refresh()
+        .await;
     let repository = tempfile::tempdir().expect("repository");
     git(repository.path(), &["init", "-b", "main"]);
     git(
@@ -127,10 +130,13 @@ async fn mock_provider_drives_real_worker_and_persists_evidence_across_restart()
     let state = tempfile::tempdir().expect("state");
     let database = state.path().join("agent.sqlite3");
     let store = AgentStore::connect(&database).await.expect("store");
+    let system_runtime = hachimi_system_runtime::SystemRuntimeManager::new();
+    system_runtime.refresh().await;
     let workbench = WorkbenchService::new(
         store.clone(),
         state.path().join("worktrees"),
         state.path().join("attachments"),
+        system_runtime.clone(),
     );
     let project = workbench
         .add_project(repository.path())
@@ -180,11 +186,16 @@ async fn mock_provider_drives_real_worker_and_persists_evidence_across_restart()
         )
         .expect("model"),
     );
-    let host = Arc::new(WorkspaceHostClient::new(
+    let host = Arc::new(WorkspaceHostClient::new_with_git_runtime(
         env!("CARGO_BIN_EXE_hachimi-workspace-worker"),
         &checkout.path,
         checkout.id.as_str(),
         snapshot.run.generation,
+        Some(
+            system_runtime
+                .require_git(hachimi_protocol::SystemToolCapability::GitLocalMutation)
+                .expect("capability-verified system Git"),
+        ),
     ));
     let mut client = ClientContext::for_window(WindowKind::Workbench);
     client.scopes.extend([

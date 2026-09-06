@@ -197,6 +197,7 @@ impl SandboxedStdioConnectorDriver {
                     timeout: SIDECAR_TIMEOUT,
                     output_limit: SIDECAR_OUTPUT_LIMIT,
                     network_policy: SandboxNetworkPolicy::DenyAll,
+                    git_metadata_writable: false,
                 },
                 CancellationToken::new(),
             )

@@ -88,6 +88,8 @@ import type {
   GatewayHealth,
   RuntimeComponentId,
   RuntimeHealthSnapshot,
+  ShellLaunchSpec,
+  SystemRuntimeSnapshot,
   FrontendLogEntry,
   ForgeChangeMutationRequest,
   ForgeChangeQueryRequest,
@@ -399,6 +401,8 @@ export const commands = {
   getRuntimeHealth: () => invoke<RuntimeHealthSnapshot>("get_runtime_health"),
   retryRuntimeComponent: (component: RuntimeComponentId) =>
     invoke<RuntimeHealthSnapshot>("retry_runtime_component", { component }),
+  getSystemRuntime: () => invoke<SystemRuntimeSnapshot>("get_system_runtime"),
+  refreshSystemRuntime: () => invoke<SystemRuntimeSnapshot>("refresh_system_runtime"),
   listComputerAppCandidates: () => invoke<ComputerAppCandidate[]>("list_computer_app_candidates"),
   listComputerAppPolicies: () => invoke<ComputerAppPolicy[]>("list_computer_app_policies"),
   updateComputerAppPolicy: (update: ComputerAppPolicyUpdate) =>
@@ -571,7 +575,7 @@ export const commands = {
     invoke<DiffReadFileResponse>("read_workspace_diff_file", { request }),
   spawnProcess: (request: ProcessSpawnRequest) =>
     invoke<ProcessSessionRecord>("spawn_process", { request }),
-  getDefaultShell: () => invoke<string[]>("get_default_shell"),
+  getDefaultShell: () => invoke<ShellLaunchSpec>("get_default_shell"),
   writeProcessStdin: (request: ProcessWriteRequest) =>
     invoke<void>("write_process_stdin", { request }),
   resizeProcess: (request: ProcessResizeRequest) => invoke<void>("resize_process", { request }),

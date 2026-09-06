@@ -14,7 +14,12 @@ async fn workspace_plan_acceptance_creates_writable_authorized_run() {
     let store = AgentStore::connect_in_memory().await.expect("store");
     let worktrees = tempfile::tempdir().expect("worktrees");
     let attachments = tempfile::tempdir().expect("attachments");
-    let service = WorkbenchService::new(store, worktrees.path(), attachments.path());
+    let service = WorkbenchService::new(
+        store,
+        worktrees.path(),
+        attachments.path(),
+        hachimi_system_runtime::SystemRuntimeManager::new(),
+    );
     let planned = service
         .create_task(
             &WorkbenchTaskStartRequest {
@@ -165,7 +170,12 @@ async fn skipped_plan_is_persistent_idempotent_and_remains_in_the_environment() 
     let store = AgentStore::connect_in_memory().await.expect("store");
     let worktrees = tempfile::tempdir().expect("worktrees");
     let attachments = tempfile::tempdir().expect("attachments");
-    let service = WorkbenchService::new(store, worktrees.path(), attachments.path());
+    let service = WorkbenchService::new(
+        store,
+        worktrees.path(),
+        attachments.path(),
+        hachimi_system_runtime::SystemRuntimeManager::new(),
+    );
     let planned = service
         .create_task(
             &WorkbenchTaskStartRequest {
@@ -284,7 +294,12 @@ async fn plan_revision_supersedes_and_creates_one_idempotent_plan_run() {
     let store = AgentStore::connect_in_memory().await.expect("store");
     let worktrees = tempfile::tempdir().expect("worktrees");
     let attachments = tempfile::tempdir().expect("attachments");
-    let service = WorkbenchService::new(store, worktrees.path(), attachments.path());
+    let service = WorkbenchService::new(
+        store,
+        worktrees.path(),
+        attachments.path(),
+        hachimi_system_runtime::SystemRuntimeManager::new(),
+    );
     let planned = service
         .create_task(
             &WorkbenchTaskStartRequest {

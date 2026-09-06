@@ -233,10 +233,11 @@ pub(super) fn retry_runtime_component(
     Ok(state.runtime_supervisor.snapshot())
 }
 
-fn component_ids() -> [RuntimeComponentId; 7] {
+fn component_ids() -> [RuntimeComponentId; 8] {
     [
         RuntimeComponentId::Gateway,
         RuntimeComponentId::InternalResources,
+        RuntimeComponentId::SystemTools,
         RuntimeComponentId::Mcp,
         RuntimeComponentId::Scheduler,
         RuntimeComponentId::BrowserExtension,

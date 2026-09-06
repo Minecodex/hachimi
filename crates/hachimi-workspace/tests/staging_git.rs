@@ -32,12 +32,18 @@ async fn git_product_host_fetches_and_pushes_staging_remotes() {
     let config: StagingConfig =
         serde_json::from_slice(&fs::read(path).expect("read staging config"))
             .expect("parse staging config");
+    let system_runtime = hachimi_system_runtime::SystemRuntimeManager::new();
+    system_runtime.refresh().await;
+    let git = system_runtime
+        .require_git(hachimi_protocol::SystemToolCapability::GitLocalMutation)
+        .expect("capability-verified system Git");
     for repository in config.repositories {
-        let client = WorkspaceHostClient::new(
+        let client = WorkspaceHostClient::new_with_git_runtime(
             env!("CARGO_BIN_EXE_hachimi-workspace-worker"),
             &repository.checkout_path,
             format!("release-{}", repository.platform_label),
             1,
+            Some(git.clone()),
         );
         let remotes = client
             .execute(

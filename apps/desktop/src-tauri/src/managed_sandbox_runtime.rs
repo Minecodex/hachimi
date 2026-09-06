@@ -38,15 +38,8 @@ struct RuntimeManifestFile<'a> {
     sha256: &'a str,
 }
 
-pub(super) fn stage(
-    data_root: &Path,
-    resource_root: &Path,
-) -> Result<ManagedSandboxRuntime, String> {
-    let root = data_root
-        .join("sandbox/windows/runtime")
-        .join(hachimi_sandbox::SANDBOX_POLICY_VERSION);
-    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
-    let definitions = [
+fn sidecar_definitions() -> Vec<(&'static str, &'static str)> {
+    let all = [
         (
             "hachimi-sandbox-setup",
             env!("HACHIMI_SANDBOX_SETUP_SHA256"),
@@ -68,8 +61,35 @@ pub(super) fn stage(
             env!("HACHIMI_WORKSPACE_WORKER_SHA256"),
         ),
     ];
+    if cfg!(windows) {
+        all.to_vec()
+    } else {
+        // macOS Seatbelt launches via /usr/bin/sandbox-exec, so only the
+        // canary and the workspace worker are staged.
+        all.into_iter()
+            .filter(|entry| {
+                matches!(
+                    entry.0,
+                    "hachimi-sandbox-canary" | "hachimi-workspace-worker"
+                )
+            })
+            .collect()
+    }
+}
+
+pub(super) fn stage(
+    data_root: &Path,
+    resource_root: &Path,
+) -> Result<ManagedSandboxRuntime, String> {
+    let root = data_root
+        .join("sandbox")
+        .join(hachimi_sandbox::backend_dir_key())
+        .join("runtime")
+        .join(hachimi_sandbox::current_policy_version());
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let definitions = sidecar_definitions();
     let mut issues = Vec::new();
-    for (name, expected) in definitions {
+    for (name, expected) in &definitions {
         let result = packaged_sidecar_path(resource_root, name)
             .and_then(|source| stage_file(&source, &root.join(executable_name(name)), expected));
         if let Err(error) = result {
@@ -89,8 +109,10 @@ pub(super) fn stage(
             .map(|(name, expected)| {
                 (
                     data_root
-                        .join("sandbox/windows/runtime")
-                        .join(hachimi_sandbox::SANDBOX_POLICY_VERSION)
+                        .join("sandbox")
+                        .join(hachimi_sandbox::backend_dir_key())
+                        .join("runtime")
+                        .join(hachimi_sandbox::current_policy_version())
                         .join(executable_name(name)),
                     (*expected).to_owned(),
                 )
@@ -108,13 +130,6 @@ pub(super) fn stage(
     {
         tracing::error!(code = "workspace_worker_registration_failed", %error, "Workspace Worker registration failed");
         issues.push("workspace_worker_registration_failed");
-    }
-    // Resolve the system Git installation eagerly so a missing or too-old Git
-    // surfaces as a runtime health issue instead of a mid-Run failure. The
-    // resolved path is cached and injected into restricted Workers verbatim.
-    if let Err(error) = hachimi_sandbox::trusted_git_executable() {
-        tracing::error!(code = "system_git_missing", %error, "System Git is unavailable");
-        issues.push("system_git_missing");
     }
     let mut runtime = runtime;
     issues.sort_unstable();
@@ -160,30 +175,11 @@ pub(super) fn stage_or_degrade(
 
 fn layout(data_root: &Path) -> ManagedSandboxRuntime {
     let root = data_root
-        .join("sandbox/windows/runtime")
-        .join(hachimi_sandbox::SANDBOX_POLICY_VERSION);
-    let definitions = [
-        (
-            "hachimi-sandbox-setup",
-            env!("HACHIMI_SANDBOX_SETUP_SHA256"),
-        ),
-        (
-            "hachimi-sandbox-launcher",
-            env!("HACHIMI_SANDBOX_LAUNCHER_SHA256"),
-        ),
-        (
-            "hachimi-sandbox-canary",
-            env!("HACHIMI_SANDBOX_CANARY_SHA256"),
-        ),
-        (
-            "hachimi-sandbox-attest",
-            env!("HACHIMI_SANDBOX_ATTEST_SHA256"),
-        ),
-        (
-            "hachimi-workspace-worker",
-            env!("HACHIMI_WORKSPACE_WORKER_SHA256"),
-        ),
-    ];
+        .join("sandbox")
+        .join(hachimi_sandbox::backend_dir_key())
+        .join("runtime")
+        .join(hachimi_sandbox::current_policy_version());
+    let definitions = sidecar_definitions();
     ManagedSandboxRuntime {
         setup: root.join(executable_name("hachimi-sandbox-setup")),
         launcher: root.join(executable_name("hachimi-sandbox-launcher")),
@@ -195,8 +191,10 @@ fn layout(data_root: &Path) -> ManagedSandboxRuntime {
             .map(|(name, expected)| {
                 (
                     data_root
-                        .join("sandbox/windows/runtime")
-                        .join(hachimi_sandbox::SANDBOX_POLICY_VERSION)
+                        .join("sandbox")
+                        .join(hachimi_sandbox::backend_dir_key())
+                        .join("runtime")
+                        .join(hachimi_sandbox::current_policy_version())
                         .join(executable_name(name)),
                     expected.to_owned(),
                 )
@@ -207,10 +205,8 @@ fn layout(data_root: &Path) -> ManagedSandboxRuntime {
 }
 
 fn publish_health(supervisor: &RuntimeSupervisor, runtime: &ManagedSandboxRuntime) {
-    supervisor.replace_internal_resource_issues(
-        "sandbox_workspace_git",
-        runtime.issue_codes.iter().copied(),
-    );
+    supervisor
+        .replace_internal_resource_issues("sandbox_runtime", runtime.issue_codes.iter().copied());
 }
 
 fn sidecar_error_code(name: &str) -> &'static str {
@@ -254,7 +250,7 @@ fn write_manifest(
     definitions: &[(&str, &str)],
 ) -> Result<(), String> {
     let manifest = RuntimeManifest {
-        policy_version: hachimi_sandbox::SANDBOX_POLICY_VERSION,
+        policy_version: hachimi_sandbox::current_policy_version(),
         files: definitions
             .iter()
             .map(|(name, sha256)| RuntimeManifestFile { name, sha256 })
@@ -273,7 +269,16 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut file = AtomicWriteFile::open(path).map_err(|error| error.to_string())?;
     file.write_all(bytes).map_err(|error| error.to_string())?;
     file.flush().map_err(|error| error.to_string())?;
-    file.commit().map_err(|error| error.to_string())
+    file.commit().map_err(|error| error.to_string())?;
+    // Staged sidecars are executables; atomic writes create 0644 by default,
+    // which is not executable on unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn executable_name(name: &str) -> String {

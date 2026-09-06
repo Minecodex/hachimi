@@ -276,6 +276,68 @@ describe("composer project Git state", () => {
     dispose();
   });
 
+  it("keeps Git actions visible and recovers after runtime refresh", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const refreshRuntime = vi.fn();
+
+    function Harness() {
+      const [ready, setReady] = createSignal(false);
+      return (
+        <I18nProvider initialLocale="zh-CN">
+          <ComposerContextControls
+            activePopover="execution"
+            onOpenChange={() => undefined}
+            projects={[project]}
+            selectedProject={project}
+            executionKind="local"
+            gitRefs={[]}
+            baseRevision=""
+            gitSnapshot={{
+              projectId: project.id,
+              gitRoot: project.rootPath,
+              state: { kind: "unborn", branch: "main" },
+              observedAtMs: 1,
+            }}
+            gitLoading={false}
+            gitInspectReady={ready()}
+            gitMutationReady={ready()}
+            gitWorktreeReady={ready()}
+            gitRuntimeReason={ready() ? undefined : "system_git_missing"}
+            onSelectProject={() => undefined}
+            onSelectExecution={() => undefined}
+            onSelectBranch={() => undefined}
+            onRefreshGit={() => undefined}
+            onRefreshGitRuntime={() => {
+              refreshRuntime();
+              setReady(true);
+            }}
+            onCreateInitialCommit={() => undefined}
+          />
+        </I18nProvider>
+      );
+    }
+
+    const dispose = render(() => <Harness />, host);
+    await Promise.resolve();
+    expect(host.textContent).toContain("Git 不可用 · system_git_missing");
+    expect(
+      host.querySelector<HTMLButtonElement>('[data-testid="project-git-create-initial"]')!.disabled,
+    ).toBe(true);
+    expect(
+      host.querySelector<HTMLButtonElement>('[data-testid="workbench-execution-worktree"]')!
+        .disabled,
+    ).toBe(true);
+
+    host.querySelector<HTMLButtonElement>('[data-testid="system-git-refresh"]')!.click();
+    await Promise.resolve();
+    expect(refreshRuntime).toHaveBeenCalledOnce();
+    expect(
+      host.querySelector<HTMLButtonElement>('[data-testid="project-git-create-initial"]')!.disabled,
+    ).toBe(false);
+    dispose();
+  });
+
   it("shows only the base branch control for a Managed Worktree", async () => {
     const host = document.createElement("div");
     document.body.append(host);

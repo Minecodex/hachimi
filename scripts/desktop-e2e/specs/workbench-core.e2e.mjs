@@ -24,6 +24,27 @@ function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+async function invokeTauri(command, args = {}) {
+  return browser
+    .executeAsync(
+      (name, payload, done) => {
+        window.__TAURI_INTERNALS__.invoke(name, payload).then(done, (error) => {
+          const detail =
+            typeof error === "string"
+              ? error
+              : JSON.stringify(error, Object.getOwnPropertyNames(error ?? {}));
+          done({ __e2eError: detail || String(error) });
+        });
+      },
+      command,
+      args,
+    )
+    .then((result) => {
+      if (result?.__e2eError) throw new Error(result.__e2eError);
+      return result;
+    });
+}
+
 async function clickWorkspaceElement(selector) {
   await clickWhenReady(selector);
 }
@@ -137,6 +158,26 @@ describe("Hachimi Workbench core lifecycle", () => {
     await expect($('[data-testid="workbench-project-git-state"]')).toHaveText(
       expect.stringContaining("main"),
     );
+
+    const systemGitGate = process.env.HACHIMI_SYSTEM_RUNTIME_TEST_GIT_GATE;
+    if (!systemGitGate) throw new Error("HACHIMI_SYSTEM_RUNTIME_TEST_GIT_GATE is missing");
+    writeFileSync(systemGitGate, "missing\n", "utf8");
+    await invokeTauri("refresh_system_runtime");
+    await browser.waitUntil(
+      async () =>
+        (await $('[data-testid="workbench-project-git-state"]').getText()).includes(
+          "system_git_missing",
+        ),
+      { timeout: 20_000, timeoutMsg: "missing Git was not projected by the Composer" },
+    );
+    await expect($('[data-testid="project-git-create-initial"]')).toBeDisabled();
+    await clickWhenReady('[data-testid="workbench-execution-target"]');
+    await expect($('[data-testid="workbench-execution-worktree"]')).toBeDisabled();
+    await clickWhenReady('[data-testid="workbench-execution-target"]');
+
+    writeFileSync(systemGitGate, "normal\n", "utf8");
+    await clickWhenReady('[data-testid="system-git-refresh"]');
+    await $('[data-testid="project-git-create-initial"]').waitForEnabled({ timeout: 20_000 });
 
     await clickWhenReady('[data-testid="project-git-create-initial"]');
     const identity = await $$(".project-git-initial-fields input");

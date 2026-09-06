@@ -1365,6 +1365,8 @@ export function HomePage(props: {
             summaryPinned={summaryPinned()}
             bottomPanelOpen={bottomPanelOpen()}
             sidebarVisible={inspectorVisible()}
+            terminalReady={projectGit.shellReady()}
+            terminalReason={projectGit.shellRuntimeReason()}
             onOpenLocation={() => {
               const project = selectedProject();
               if (project) void handleProjectAction(project, "open");
@@ -1379,6 +1381,7 @@ export function HomePage(props: {
               }
               openBottomTerminal();
             }}
+            onRefreshSystemRuntime={projectGit.refreshRuntime}
             onToggleSidebar={() => {
               if (inspectorVisible()) {
                 setInspectorVisible(false);
@@ -1650,10 +1653,15 @@ export function HomePage(props: {
                 baseRevision={projectGit.baseRevision()}
                 gitSnapshot={projectGit.snapshot()}
                 gitLoading={projectGit.loading()}
+                gitInspectReady={projectGit.gitInspectReady()}
+                gitMutationReady={projectGit.gitMutationReady()}
+                gitWorktreeReady={projectGit.gitWorktreeReady()}
+                gitRuntimeReason={projectGit.runtimeReason()}
                 onSelectProject={selectProject}
                 onSelectExecution={projectGit.setExecutionKind}
                 onSelectBranch={projectGit.setBaseRevision}
                 onRefreshGit={projectGit.refresh}
+                onRefreshGitRuntime={projectGit.refreshRuntime}
                 onCreateInitialCommit={projectGit.openInitialCommit}
               />
               <Composer class="composer">

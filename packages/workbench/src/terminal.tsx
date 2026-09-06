@@ -40,8 +40,8 @@ function encodeBytes(value: string): string {
 
 function terminalTitle(snapshot: WorkbenchSessionSnapshot, index: number) {
   const path = snapshot.checkout?.path;
-  if (!path) return `PowerShell ${index + 1}`;
-  return path.endsWith("\\") || path.endsWith("/") ? path : `${path}\\`;
+  if (!path) return `Terminal ${index + 1}`;
+  return path;
 }
 
 export function TerminalPanel(props: {
@@ -97,13 +97,8 @@ export function TerminalPanel(props: {
         // The shell lookup awaits, so wrap spawn in one promise and cache it
         // synchronously; a second mount must observe the same launch.
         launch = (async () => {
-          let command = ["powershell.exe"];
-          try {
-            const shell = await props.commandPort.getDefaultShell?.();
-            if (shell && shell.length > 0) command = shell;
-          } catch {
-            // Keep the fallback shell when the host command is unavailable.
-          }
+          const shell = await props.commandPort.getDefaultShell();
+          const command = [shell.executablePath, ...shell.interactiveArgs];
           return props.commandPort.spawnProcess({
             context: directUserMutationContext(),
             sessionId: props.snapshot.session.id,

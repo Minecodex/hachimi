@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::OnceLock;
 use std::{io::Write, path::Path};
 
 use atomic_write_file::AtomicWriteFile;
@@ -11,8 +10,6 @@ use crate::appcontainer::{
     grant_appcontainer_access, revoke_appcontainer_access,
 };
 use crate::runtime_attestation::SANDBOX_POLICY_VERSION;
-
-static TRUSTED_GIT_EXECUTABLE: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,9 +24,37 @@ pub struct SandboxSetupMarker {
     pub app_container_sid: Option<String>,
     #[serde(default)]
     pub acl_paths: Vec<String>,
-    #[serde(default)]
-    pub git_executable: Option<String>,
     pub installed_at_ms: i64,
+}
+
+/// Records the macOS Seatbelt policy marker. Seatbelt needs no per-user OS
+/// installation (no AppContainer profile, no ACLs), so this is a pure version
+/// record; enforcement is proven by live canary attestation on every probe.
+#[cfg(target_os = "macos")]
+pub fn install_macos_marker(marker_path: &Path) -> Result<SandboxSetupMarker, String> {
+    let parent = marker_path
+        .parent()
+        .ok_or_else(|| "sandbox marker path has no parent".to_owned())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let marker = SandboxSetupMarker {
+        version: crate::runtime_attestation::MACOS_SANDBOX_POLICY_VERSION.into(),
+        // Filesystem rules are generated per launch, process teardown rides
+        // the launch process group, and networking is denied by the profile.
+        acl_component: true,
+        token_component: true,
+        network_component: true,
+        app_container_name: None,
+        app_container_sid: None,
+        acl_paths: Vec::new(),
+        installed_at_ms: now_ms(),
+    };
+    let encoded = serde_json::to_vec_pretty(&marker).map_err(|error| error.to_string())?;
+    let mut file = AtomicWriteFile::open(marker_path).map_err(|error| error.to_string())?;
+    file.write_all(&encoded)
+        .map_err(|error| error.to_string())?;
+    file.flush().map_err(|error| error.to_string())?;
+    file.commit().map_err(|error| error.to_string())?;
+    Ok(marker)
 }
 
 pub fn install_sandbox_marker(
@@ -61,16 +86,6 @@ pub fn install_sandbox_marker(
         }
         return Err(format!("sandbox launcher ACL setup failed: {error}"));
     }
-    let git_runtime = match trusted_git_runtime() {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            let _ = revoke_restricted_code_access(launcher_parent);
-            if profile_created {
-                let _ = AppContainerSid::delete_profile();
-            }
-            return Err(format!("trusted Git runtime discovery failed: {error}"));
-        }
-    };
     let acl_paths = vec![launcher_parent.to_string_lossy().into_owned()];
     let marker = SandboxSetupMarker {
         version: SANDBOX_POLICY_VERSION.into(),
@@ -82,9 +97,6 @@ pub fn install_sandbox_marker(
         app_container_name: Some(APP_CONTAINER_NAME.to_owned()),
         app_container_sid: Some(app_container_sid),
         acl_paths,
-        git_executable: git_runtime
-            .as_ref()
-            .map(|runtime| runtime.executable.to_string_lossy().into_owned()),
         installed_at_ms: now_ms(),
     };
     let encoded = serde_json::to_vec_pretty(&marker).map_err(|error| error.to_string())?;
@@ -102,171 +114,6 @@ pub fn install_sandbox_marker(
         return Err(format!("sandbox marker commit failed: {error}"));
     }
     Ok(marker)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TrustedGitRuntime {
-    executable: std::path::PathBuf,
-}
-
-/// Minimum supported system Git version. Older releases lack the config
-/// surface Hachimi relies on (for example `core.hooksPath` hardening).
-const MINIMUM_GIT_VERSION: (u64, u64) = (2, 40);
-
-/// Resolves the trusted Git executable. Following openai/codex, Hachimi uses
-/// the system Git installation on every platform; lookup prefers fixed
-/// well-known locations over PATH and never consults the checkout directory.
-fn trusted_git_runtime() -> Result<Option<TrustedGitRuntime>, String> {
-    let candidate = TRUSTED_GIT_EXECUTABLE
-        .get()
-        .cloned()
-        .or_else(|| std::env::var_os("HACHIMI_GIT_EXECUTABLE").map(Into::into));
-    if let Some(candidate) = candidate {
-        return validate_git_executable(&candidate)
-            .map(|executable| Some(TrustedGitRuntime { executable }));
-    }
-    for candidate in well_known_git_candidates() {
-        if let Ok(executable) = validate_git_executable(&candidate) {
-            return Ok(Some(TrustedGitRuntime { executable }));
-        }
-    }
-    if let Some(candidate) = search_path_git()
-        && let Ok(executable) = validate_git_executable(&candidate)
-    {
-        return Ok(Some(TrustedGitRuntime { executable }));
-    }
-    Ok(None)
-}
-
-/// Binds an explicit trusted Git executable (runtime registration, tests).
-pub fn set_trusted_git_executable(path: std::path::PathBuf) -> Result<(), String> {
-    let executable = validate_git_executable(&path)?;
-    if let Some(existing) = TRUSTED_GIT_EXECUTABLE.get() {
-        return if existing == &executable {
-            Ok(())
-        } else {
-            Err("trusted Git executable was already initialized to another path".into())
-        };
-    }
-    TRUSTED_GIT_EXECUTABLE
-        .set(executable)
-        .map_err(|_| "trusted Git executable was already initialized".into())
-}
-
-fn validate_git_executable(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
-    if !path.is_file() {
-        return Err(format!("Git executable is missing: {}", path.display()));
-    }
-    let executable = path
-        .canonicalize()
-        .map_err(|error| format!("Git canonicalization failed: {error}"))?;
-    let output = hachimi_process_policy::std_command(
-        &executable,
-        hachimi_process_policy::ProcessPolicy::HiddenCaptured,
-    )
-    .arg("--version")
-    .stdin(std::process::Stdio::null())
-    .stdout(std::process::Stdio::piped())
-    .stderr(std::process::Stdio::null())
-    .output()
-    .map_err(|error| format!("Git probe failed for {}: {error}", executable.display()))?;
-    if !output.status.success() {
-        return Err(format!(
-            "Git probe failed for {}: git --version exited with {}",
-            executable.display(),
-            output.status
-        ));
-    }
-    let Some(version) = parse_git_version(&output.stdout) else {
-        return Err(format!(
-            "Git probe failed for {}: unrecognized version output",
-            executable.display()
-        ));
-    };
-    if version < MINIMUM_GIT_VERSION {
-        return Err(format!(
-            "Git {}.{} at {} is too old; Hachimi requires Git >= {}.{}",
-            version.0,
-            version.1,
-            executable.display(),
-            MINIMUM_GIT_VERSION.0,
-            MINIMUM_GIT_VERSION.1
-        ));
-    }
-    Ok(executable)
-}
-
-fn parse_git_version(stdout: &[u8]) -> Option<(u64, u64)> {
-    let text = String::from_utf8_lossy(stdout);
-    let version = text.trim().strip_prefix("git version ")?;
-    let mut parts = version.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    Some((major, minor))
-}
-
-#[cfg(windows)]
-fn well_known_git_candidates() -> Vec<std::path::PathBuf> {
-    let mut candidates = Vec::new();
-    for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
-        if let Some(root) = std::env::var_os(variable) {
-            candidates.push(Path::new(&root).join("Git").join("cmd").join("git.exe"));
-        }
-    }
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        candidates.push(
-            Path::new(&local)
-                .join("Programs")
-                .join("Git")
-                .join("cmd")
-                .join("git.exe"),
-        );
-    }
-    candidates
-}
-
-#[cfg(not(windows))]
-fn well_known_git_candidates() -> Vec<std::path::PathBuf> {
-    vec![std::path::PathBuf::from("/usr/bin/git")]
-}
-
-fn search_path_git() -> Option<std::path::PathBuf> {
-    let paths = std::env::var_os("PATH")?;
-    let names: &[&str] = if cfg!(windows) {
-        &["git.exe", "git"]
-    } else {
-        &["git"]
-    };
-    for directory in std::env::split_paths(&paths) {
-        for name in names {
-            let candidate = directory.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-/// Returns the exact Git executable bound during setup or resolved from the
-/// system installation. Restricted Workspace Workers receive this path
-/// explicitly and never resolve Git from their checkout current directory.
-pub fn trusted_git_executable() -> Result<std::path::PathBuf, String> {
-    if let Some(executable) = TRUSTED_GIT_EXECUTABLE.get() {
-        return Ok(executable.clone());
-    }
-    let resolved = trusted_git_runtime()?
-        .map(|runtime| runtime.executable)
-        .ok_or_else(|| {
-            "a system Git installation (>= 2.40) is required; install Git for Windows or the \
-             Xcode Command Line Tools and restart Hachimi"
-                .to_owned()
-        })?;
-    let _ = TRUSTED_GIT_EXECUTABLE.set(resolved);
-    TRUSTED_GIT_EXECUTABLE
-        .get()
-        .cloned()
-        .ok_or_else(|| "trusted Git executable cache failed".to_owned())
 }
 
 pub fn uninstall_sandbox(marker_path: &Path) -> Result<(), String> {
@@ -410,6 +257,7 @@ pub fn prepare_workspace_acl(
     checkout: &Path,
     run_temp: &Path,
     worker_program: &Path,
+    git_executable: Option<&Path>,
 ) -> Result<Vec<std::path::PathBuf>, String> {
     std::fs::create_dir_all(run_temp).map_err(|error| {
         format!(
@@ -426,7 +274,9 @@ pub fn prepare_workspace_acl(
 
     let dot_git = checkout.join(".git");
     let mut read_roots = vec![worker_parent.to_path_buf()];
-    if let Some(common_dir) = git_common_dir(checkout)? {
+    if let Some(git_executable) = git_executable
+        && let Some(common_dir) = git_common_dir(git_executable, checkout)?
+    {
         protect_restricted_code_read_only(&common_dir)?;
         read_roots.push(common_dir);
     }
@@ -446,6 +296,14 @@ pub fn prepare_workspace_acl(
 /// icacls adapter makes the protected child explicit instead, preserving all
 /// unrelated user/admin ACEs while replacing only its two sandbox identities.
 fn protect_restricted_code_read_only(path: &Path) -> Result<(), String> {
+    if !cfg!(windows) {
+        // NTFS ACLs for the Restricted Code / AppContainer identities are a
+        // Windows enforcement artifact. The macOS Seatbelt backend (P2)
+        // expresses the read-only `.git` carve-out as SBPL path rules at
+        // launch time (driven by `git_metadata_writable`), so the bookkeeping
+        // call is a no-op off Windows.
+        return Ok(());
+    }
     let status = run_icacls(path, &["/inheritance:d", "/Q"])?;
     if !status.success() {
         return Err(format!(
@@ -464,11 +322,14 @@ pub struct GitMutationAcl {
     metadata_dirs: Vec<std::path::PathBuf>,
 }
 
-pub fn prepare_git_mutation_acl(checkout: &Path) -> Result<GitMutationAcl, String> {
+pub fn prepare_git_mutation_acl(
+    checkout: &Path,
+    git_executable: &Path,
+) -> Result<GitMutationAcl, String> {
     let dot_git = checkout.join(".git");
-    let common_dir = git_common_dir(checkout)?
+    let common_dir = git_common_dir(git_executable, checkout)?
         .ok_or_else(|| "Git mutation requires a repository common directory".to_owned())?;
-    let git_dir = git_absolute_dir(checkout)?
+    let git_dir = git_absolute_dir(git_executable, checkout)?
         .ok_or_else(|| "Git mutation requires an absolute repository directory".to_owned())?;
     if git_dir != common_dir && !git_dir.starts_with(&common_dir) {
         return Err("linked-worktree Git directory is outside its common directory".to_owned());
@@ -530,24 +391,27 @@ pub fn restore_git_mutation_acl(acl: &GitMutationAcl) -> Result<(), String> {
     }
 }
 
-fn git_common_dir(checkout: &Path) -> Result<Option<std::path::PathBuf>, String> {
-    git_metadata_dir(checkout, "--git-common-dir")
+fn git_common_dir(
+    git_executable: &Path,
+    checkout: &Path,
+) -> Result<Option<std::path::PathBuf>, String> {
+    git_metadata_dir(git_executable, checkout, "--git-common-dir")
 }
 
-fn git_absolute_dir(checkout: &Path) -> Result<Option<std::path::PathBuf>, String> {
-    git_metadata_dir(checkout, "--absolute-git-dir")
+fn git_absolute_dir(
+    git_executable: &Path,
+    checkout: &Path,
+) -> Result<Option<std::path::PathBuf>, String> {
+    git_metadata_dir(git_executable, checkout, "--absolute-git-dir")
 }
 
 fn git_metadata_dir(
+    git_executable: &Path,
     checkout: &Path,
     revision_argument: &str,
 ) -> Result<Option<std::path::PathBuf>, String> {
-    #[cfg(test)]
-    let git = std::path::PathBuf::from("git");
-    #[cfg(not(test))]
-    let git = trusted_git_executable()?;
     let output = hachimi_process_policy::std_command(
-        git,
+        git_executable,
         hachimi_process_policy::ProcessPolicy::HiddenCaptured,
     )
     .args(["-C"])
@@ -609,31 +473,7 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{git_common_dir, parse_git_version, trusted_git_executable};
-
-    #[test]
-    fn git_version_parsing_accepts_platform_suffixes() {
-        assert_eq!(parse_git_version(b"git version 2.50.1\n"), Some((2, 50)));
-        assert_eq!(
-            parse_git_version(b"git version 2.50.1.windows.1\r\n"),
-            Some((2, 50))
-        );
-        assert_eq!(
-            parse_git_version(b"git version 2.39.5 (Apple Git-154)\n"),
-            Some((2, 39))
-        );
-        assert_eq!(parse_git_version(b"git version 2\n"), None);
-        assert_eq!(parse_git_version(b"not git\n"), None);
-    }
-
-    #[test]
-    fn system_git_resolves_with_a_supported_version() {
-        // Dev machines and CI runners all ship a system Git; the resolver must
-        // accept it and cache the explicit absolute path for Worker injection.
-        let git = trusted_git_executable().expect("system Git must resolve");
-        assert!(git.is_absolute());
-        assert!(git.is_file());
-    }
+    use super::git_common_dir;
 
     #[test]
     fn linked_worktree_gitfile_resolves_the_shared_common_directory() {
@@ -673,7 +513,8 @@ mod tests {
         );
 
         assert!(worktree.join(".git").is_file());
-        let resolved = git_common_dir(&worktree)
+        let git = git_path();
+        let resolved = git_common_dir(&git, &worktree)
             .expect("git common dir query")
             .expect("linked worktree common dir");
         assert_eq!(
@@ -684,7 +525,7 @@ mod tests {
 
     fn run_git(cwd: &std::path::Path, arguments: &[&str]) {
         let output = hachimi_process_policy::std_command(
-            "git",
+            git_path(),
             hachimi_process_policy::ProcessPolicy::HiddenCaptured,
         )
         .args(arguments)
@@ -697,5 +538,14 @@ mod tests {
             "git {arguments:?} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn git_path() -> std::path::PathBuf {
+        std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
+            .map(|root| root.join(if cfg!(windows) { "git.exe" } else { "git" }))
+            .find(|path| path.is_file())
+            .expect("system Git")
+            .canonicalize()
+            .expect("canonical Git")
     }
 }

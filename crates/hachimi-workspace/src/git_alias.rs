@@ -27,7 +27,10 @@ pub(crate) struct RestrictedGitAliases {
 
 impl RestrictedGitAliases {
     #[cfg(windows)]
-    pub(crate) fn for_checkout(checkout: &Path) -> Result<Option<Self>, WorkspaceError> {
+    pub(crate) fn for_checkout(
+        checkout: &Path,
+        git_executable: Option<&Path>,
+    ) -> Result<Option<Self>, WorkspaceError> {
         let checkout = hachimi_sandbox::validate_checkout_root(checkout).map_err(|error| {
             WorkspaceError::new(WorkspaceErrorCode::PathOutsideCheckout, error.to_string())
         })?;
@@ -42,11 +45,15 @@ impl RestrictedGitAliases {
                 _checkout_drive: checkout_drive,
             }));
         }
-        let git = hachimi_sandbox::trusted_git_executable()
-            .map_err(|error| WorkspaceError::new(WorkspaceErrorCode::HostDisconnected, error))?;
-        let git_dir = git_stdout(&git, &checkout, &["rev-parse", "--absolute-git-dir"])?;
+        let git = git_executable.ok_or_else(|| {
+            WorkspaceError::new(
+                WorkspaceErrorCode::HostDisconnected,
+                "system Git runtime is unavailable",
+            )
+        })?;
+        let git_dir = git_stdout(git, &checkout, &["rev-parse", "--absolute-git-dir"])?;
         let git_dir = PathBuf::from(git_dir).canonicalize().map_err(io_error)?;
-        let common_dir = git_stdout(&git, &checkout, &["rev-parse", "--git-common-dir"])?;
+        let common_dir = git_stdout(git, &checkout, &["rev-parse", "--git-common-dir"])?;
         let common_dir = PathBuf::from(common_dir);
         let common_dir = if common_dir.is_absolute() {
             common_dir
@@ -74,7 +81,10 @@ impl RestrictedGitAliases {
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn for_checkout(_checkout: &Path) -> Result<Option<Self>, WorkspaceError> {
+    pub(crate) fn for_checkout(
+        _checkout: &Path,
+        _git_executable: Option<&Path>,
+    ) -> Result<Option<Self>, WorkspaceError> {
         Ok(None)
     }
 

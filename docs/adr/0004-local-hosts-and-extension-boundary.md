@@ -46,3 +46,31 @@ Codex public product behavior is the primary permission/interaction reference. O
 `f6d456235cf011004f7cffc71a95acf6fbf1fa0a` is a behavior reference for Channel routing and durable
 delivery. Current Local Host implementations are original Hachimi code; exact derivations, if any,
 must be registered before adaptation.
+
+## Amendment 2026-08-23: macOS Computer host
+
+The Computer host gains a macOS broker (`crates/hachimi-computer/src/platform/macos.rs`):
+enumeration/identity via `CGWindowList` + `NSRunningApplication`, one-shot capture via
+`SCScreenshotManager` (macOS 14+), input injection via `CGEvent` (US-ANSI virtual keycodes, Unicode
+text payloads, line-unit scroll), and window operations via AXUIElement (position/size/minimize/
+zoom/close) plus `NSRunningApplication.activateWithOptions`. Elevated targets map to root-owned
+processes (`proc_pidinfo`); there is no protected-desktop equivalent on macOS, and TCC permission
+state (Screen Recording / Accessibility) replaces it as the fail-closed gate with stable error codes
+`computer_capture_requires_macos14`, `computer_screen_recording_required` and
+`computer_accessibility_required`. User-takeover fencing maps the Windows foreground-window gate to
+frontmost-application matching. `LaunchApp` resolves bundle identifiers, app names and `.app` paths
+through `/usr/bin/open -a`; the protocol's `.exe` shape validation is now platform-split.
+
+## Amendment 2026-09-05: macOS Browser host
+
+The Browser embedded host gains a macOS implementation (`crates/hachimi-cef-host` plus
+`apps/desktop/src-tauri/src/cef_overlay.rs`). macOS has no cross-process NSView embedding equivalent
+to the Win32 child-HWND model, so the managed Chromium profile renders windowless (OSR) and the
+desktop composites frames above the WKWebView through a per-tab native overlay view; input routes
+the opposite way through a typed `SendInput` IPC command onto `BrowserHost::send_*_event`,
+preserving the existing UserInput epoch and shortcut fencing. Origin grants, task-owned tabs,
+observation IDs and upload/download tokens are unchanged. CEF renderer/GPU/helper processes run
+under Chromium's built-in Seatbelt sandbox (helpers call `cef_sandbox_initialize` before the
+framework loads); this is independent of, and does not conflict with, the workspace Seatbelt backend
+(ADR 0001). Distribution currently targets a dev channel: an ad-hoc-signed dmg via GitHub Release;
+Developer ID signing plus notarization remains the release gate (docs/mac-plan/phase-5).

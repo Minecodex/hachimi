@@ -229,6 +229,7 @@ async fn stale_generation_guard_fails_before_restricted_worker_dispatch() {
             session_id,
             run_id,
             grants,
+            git_metadata_writable: false,
         },
         Arc::new(RejectingLaunchGuard {
             validations: validations.clone(),
@@ -250,4 +251,44 @@ async fn stale_generation_guard_fails_before_restricted_worker_dispatch() {
     assert_eq!(validations.load(Ordering::SeqCst), 1);
     assert_eq!(dispatches.load(Ordering::SeqCst), 0);
     assert!(!directory.path().join("blocked.txt").exists());
+}
+
+#[tokio::test]
+async fn workspace_hosts_pin_the_runtime_revision_bound_at_creation() {
+    let manager = hachimi_system_runtime::SystemRuntimeManager::new();
+    let first_snapshot = manager.refresh().await;
+    let Ok(first_lease) = manager.require_git(hachimi_protocol::SystemToolCapability::GitInspect)
+    else {
+        return;
+    };
+    let directory = tempfile::tempdir().expect("workspace");
+    let first_host = WorkspaceHostClient::new_with_git_runtime(
+        directory.path().join("worker"),
+        directory.path(),
+        "first",
+        1,
+        Some(first_lease),
+    );
+
+    let second_snapshot = manager.refresh().await;
+    let second_lease = manager
+        .require_git(hachimi_protocol::SystemToolCapability::GitInspect)
+        .expect("Git remained available after refresh");
+    let second_host = WorkspaceHostClient::new_with_git_runtime(
+        directory.path().join("worker"),
+        directory.path(),
+        "second",
+        2,
+        Some(second_lease),
+    );
+
+    assert_eq!(first_host.git_runtime_revision, first_snapshot.revision);
+    assert_eq!(second_host.git_runtime_revision, second_snapshot.revision);
+    assert_ne!(
+        first_host.git_runtime_revision,
+        second_host.git_runtime_revision
+    );
+    first_host
+        .verify_git_runtime()
+        .expect("the active host keeps its original verified lease");
 }

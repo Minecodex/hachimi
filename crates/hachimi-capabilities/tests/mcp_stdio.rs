@@ -6,7 +6,7 @@ use std::{
 
 use futures_util::FutureExt;
 use hachimi_agent::{McpToolPolicy, ToolCall, ToolInvocation, mcp_tool_executors};
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 use hachimi_capabilities::McpStdioSandboxHost;
 use hachimi_capabilities::{
     McpClientError, McpClientHandle, McpProgressFuture, McpProgressHandler,
@@ -458,6 +458,7 @@ async fn production_stdio_mcp_runs_restricted_and_cannot_connect_to_loopback() {
         host_root.path(),
         &preflight_temp,
         std::path::Path::new(&mcp_server),
+        None,
     )
     .expect("restricted MCP preflight ACL");
     let mut preflight = std::process::Command::new(
@@ -550,6 +551,91 @@ async fn production_stdio_mcp_runs_restricted_and_cannot_connect_to_loopback() {
         async_preflight.status,
         String::from_utf8_lossy(&async_preflight.stderr)
     );
+    let mut server = persisted_config("restricted-network", true);
+    server.transport = McpServerTransport::Stdio {
+        command: mcp_server,
+        args: vec!["--network-probe-address".into(), address.to_string()],
+        cwd: None,
+    };
+    let snapshot = supervisor.apply(&server).await;
+    assert_eq!(
+        snapshot.health.state,
+        McpServerHealthState::Ready,
+        "restricted MCP startup failed with {:?}",
+        snapshot.health.error_code
+    );
+    let (client, tools) = supervisor
+        .client_and_tools(&server.id)
+        .await
+        .expect("restricted MCP runtime");
+    assert!(tools.iter().any(|tool| tool.name == "network_probe"));
+    let result = client
+        .call_tool("network_probe", json!({}), CancellationToken::new())
+        .await
+        .expect("network probe call");
+    assert_eq!(
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("connected"))
+            .and_then(serde_json::Value::as_bool),
+        Some(false),
+        "restricted stdio MCP connected despite deny-all network policy"
+    );
+    supervisor.stop(&server.id).await;
+}
+
+#[cfg(target_os = "macos")]
+use hachimi_sandbox::{SandboxBackend, SandboxStatus, install_macos_marker, platform_probe};
+
+/// macOS Seatbelt variant: runs locally (no release environment), proving the
+/// production stdio MCP path executes sandboxed with deny-all networking.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn production_stdio_mcp_runs_restricted_and_cannot_connect_to_loopback() {
+    let data = tempfile::tempdir().expect("data root");
+    let marker = data.path().join("sandbox/macos-seatbelt/setup.json");
+    install_macos_marker(&marker).expect("macOS marker");
+    let canary = std::path::PathBuf::from(env!("CARGO_BIN_EXE_hachimi-mcp-test-server"))
+        .parent()
+        .expect("test server directory")
+        .join("hachimi-sandbox-canary");
+    assert!(
+        canary.is_file(),
+        "sandbox canary is missing beside the MCP test server ({}); run `corepack pnpm sidecars:prepare`",
+        canary.display()
+    );
+    let canary_hash = {
+        use sha2::Digest as _;
+        let bytes = std::fs::read(&canary).expect("canary bytes");
+        sha2::Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    let backend: Arc<dyn SandboxBackend> = Arc::new(
+        platform_probe(marker)
+            .with_runtime(
+                std::path::PathBuf::new(),
+                &canary,
+                data.path().join("sandbox/attestation"),
+            )
+            .with_runtime_integrity(vec![(canary, canary_hash)]),
+    );
+    assert_eq!(
+        SandboxStatus::from_report(&backend.capability_report()),
+        SandboxStatus::Enforced,
+        "restricted stdio MCP smoke requires a fully attested Sandbox"
+    );
+
+    let host_root = tempfile::tempdir().expect("MCP host root");
+    let supervisor =
+        McpSupervisor::with_stdio_sandbox(McpStdioSandboxHost::new(backend, host_root.path()));
+    let listener =
+        std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("loopback listener");
+    let address = listener.local_addr().expect("listener address");
+    let mcp_server = std::env::var("HACHIMI_RELEASE_MCP_TEST_SERVER")
+        .unwrap_or_else(|_| env!("CARGO_BIN_EXE_hachimi-mcp-test-server").into());
     let mut server = persisted_config("restricted-network", true);
     server.transport = McpServerTransport::Stdio {
         command: mcp_server,

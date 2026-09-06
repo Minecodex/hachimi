@@ -33,17 +33,29 @@ pub(crate) async fn spawn_unix_pty(
     size: ProcessTerminalSize,
     timeout: Option<Duration>,
 ) -> Result<SpawnedRuntime, ProcessError> {
-    // The restricted launcher is the Windows sandbox contract; the macOS
-    // Seatbelt backend lands in P2 (docs/mac-plan/phase-2-sandbox-seatbelt.md).
-    if launcher.is_some() {
+    // Restricted terminal sessions ride `/usr/bin/sandbox-exec` on macOS; the
+    // launcher binary path is a Windows contract and is not used here.
+    if launcher.is_some() && !cfg!(target_os = "macos") {
         return Err(ProcessError::Pty(
-            "the restricted process launcher is not supported on this platform yet".into(),
+            "the restricted process launcher is only supported on Windows and macOS".into(),
         ));
     }
-    let spawned =
-        tokio::task::spawn_blocking(move || spawn_native(&command, &cwd, &environment, size))
-            .await
-            .map_err(|error| ProcessError::Pty(error.to_string()))??;
+    #[cfg(target_os = "macos")]
+    let seatbelt_args = if launcher.is_some() {
+        Some(
+            hachimi_sandbox::seatbelt_terminal_args(&command, &cwd, &environment)
+                .map_err(ProcessError::Pty)?,
+        )
+    } else {
+        None
+    };
+    #[cfg(not(target_os = "macos"))]
+    let seatbelt_args: Option<Vec<std::ffi::OsString>> = None;
+    let spawned = tokio::task::spawn_blocking(move || {
+        spawn_native(&command, &cwd, &environment, size, seatbelt_args)
+    })
+    .await
+    .map_err(|error| ProcessError::Pty(error.to_string()))??;
     let SpawnedUnixPty {
         master,
         reader,
@@ -128,6 +140,7 @@ fn spawn_native(
     cwd: &std::path::Path,
     environment: &BTreeMap<String, String>,
     size: ProcessTerminalSize,
+    seatbelt_args: Option<Vec<std::ffi::OsString>>,
 ) -> Result<SpawnedUnixPty, ProcessError> {
     if size.rows == 0 || size.cols == 0 {
         return Err(ProcessError::InvalidRequest(
@@ -145,8 +158,18 @@ fn spawn_native(
             pixel_height: 0,
         })
         .map_err(|error| ProcessError::Pty(error.to_string()))?;
-    let mut builder = CommandBuilder::new(program);
-    builder.args(&command[1..]);
+    let mut builder = match seatbelt_args {
+        Some(arguments) => {
+            let mut builder = CommandBuilder::new("/usr/bin/sandbox-exec");
+            builder.args(&arguments);
+            builder
+        }
+        None => {
+            let mut builder = CommandBuilder::new(program);
+            builder.args(&command[1..]);
+            builder
+        }
+    };
     builder.cwd(cwd);
     builder.env_clear();
     for (name, value) in environment {
