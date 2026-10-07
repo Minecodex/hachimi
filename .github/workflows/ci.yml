@@ -164,7 +164,15 @@ jobs:
   ci-gate:
     name: CI
     if: ${{ always() }}
-    needs: ["windows-static", "windows-rust", "windows-ui", "windows-desktop", "windows-non-admin", "macos"]
+    needs:
+      [
+        "windows-static",
+        "windows-rust",
+        "windows-ui",
+        "windows-desktop",
+        "windows-non-admin",
+        "macos",
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
