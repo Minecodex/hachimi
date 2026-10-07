@@ -132,3 +132,8 @@ Debug 默认使用 `target/hachimi-data`；Windows 便携版使用程序同级 `
 ## 许可
 
 源代码使用 Apache-2.0。默认 VRM、内置 VRMA、语音模型、ONNX Runtime 和 DirectML 的来源与许可见 [NOTICE](NOTICE.md) 及 `apps/desktop/src-tauri/resources/ai-models/THIRD-PARTY-NOTICES.md`。
+
+
+## Contributing and CI
+
+Changes to the default branch require a pull request and passing CI. See [the branch protection and CI policy](docs/ci.md).
