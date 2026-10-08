@@ -4,6 +4,7 @@ export default defineConfig({
   testDir: "./src/visual",
   snapshotPathTemplate: "{testDir}/__screenshots__/{arg}{ext}",
   use: {
+    locale: "en-US",
     timezoneId: "Asia/Shanghai",
     baseURL: "http://127.0.0.1:6007",
     viewport: { width: 1280, height: 720 },

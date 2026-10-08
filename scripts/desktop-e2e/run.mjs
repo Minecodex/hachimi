@@ -66,6 +66,16 @@ if (!existsSync(driver) || !existsSync(nativeDriver)) {
     `Desktop E2E drivers are missing. Set TAURI_DRIVER and MSEDGEDRIVER, or provision ${driver} and ${nativeDriver}.`,
   );
 }
+const driverManifest = JSON.parse(
+  readFileSync(join(root, "target/desktop-e2e-tools/manifest.json"), "utf8"),
+);
+const webviewRuntimeDirectory = driverManifest.webviewRuntimeDirectory;
+if (
+  typeof webviewRuntimeDirectory !== "string" ||
+  !existsSync(join(webviewRuntimeDirectory, "msedgewebview2.exe"))
+) {
+  throw new Error("Desktop E2E WebView2 runtime is missing from the prepared driver manifest.");
+}
 mkdirSync(project, { recursive: true });
 mkdirSync(data, { recursive: true });
 writeFileSync(join(data, ".hachimi-data-root"), "com.hachimi.desktop", "utf8");
@@ -590,6 +600,7 @@ const activeChildren = new Set();
 
 const testEnvironment = {
   ...process.env,
+  WEBVIEW2_BROWSER_EXECUTABLE_FOLDER: webviewRuntimeDirectory,
   CARGO_NET_OFFLINE: "true",
   CARGO_TARGET_DIR: buildTarget,
   TAURI_CONFIG: JSON.stringify({ build: { devUrl: null } }),

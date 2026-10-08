@@ -31,7 +31,9 @@ export const config = {
       "tauri:options": {
         application: process.env.HACHIMI_DESKTOP_E2E_APP,
         webviewOptions: {
+          browserExecutableFolder: process.env.WEBVIEW2_BROWSER_EXECUTABLE_FOLDER,
           userDataFolder: process.env.HACHIMI_DESKTOP_E2E_WEBVIEW_DATA,
+          additionalBrowserArguments: ["--remote-debugging-port=0"],
         },
       },
     },

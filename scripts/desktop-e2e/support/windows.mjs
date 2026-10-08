@@ -76,6 +76,8 @@ export async function restartApplication() {
       "tauri:options": {
         application,
         webviewOptions: {
+          browserExecutableFolder: process.env.WEBVIEW2_BROWSER_EXECUTABLE_FOLDER,
+          additionalBrowserArguments: ["--remote-debugging-port=0"],
           // The application database remains under HACHIMI_DATA_DIR. A new
           // browser-only profile avoids WebView2's short-lived Preferences lock.
           userDataFolder: join(webviewData, `restart-${restartSequence}`),

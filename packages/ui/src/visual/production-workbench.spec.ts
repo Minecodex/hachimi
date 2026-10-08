@@ -975,11 +975,14 @@ test("production task center uses cards and focused dialogs", async ({ page }) =
   });
   await page.getByTestId("task-create-toggle").click();
   await expect(page.getByTestId("task-name")).toBeVisible();
+  await expect(page.getByTestId("task-run-at")).toHaveValue("2026-07-27T00:00");
   expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual(
     [],
   );
   await expect(page).toHaveScreenshot("production-task-center-1280x800.png", {
     animations: "disabled",
+    // Windows owns the native date field's text format. Its ISO value is asserted above.
+    stylePath: resolve(import.meta.dirname, "native-date-screenshot.css"),
   });
   await page.getByRole("button", { name: /关闭|Close/ }).click();
   await page.getByTestId("task-history").first().click();
