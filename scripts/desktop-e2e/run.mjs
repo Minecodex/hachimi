@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import {
   createWriteStream,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -747,6 +748,10 @@ try {
     }
   }
   driverLog.end();
+  const applicationLogs = join(data, "logs");
+  if (existsSync(applicationLogs)) {
+    cpSync(applicationLogs, join(artifacts, "application-logs"), { recursive: true });
+  }
   await new Promise((resolveClose) => mcpServer.close(resolveClose));
   if (succeeded && process.env.HACHIMI_KEEP_DESKTOP_E2E !== "1") {
     rmSync(temporaryRoot, { recursive: true, force: true });
