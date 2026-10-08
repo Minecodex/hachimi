@@ -70,6 +70,12 @@ jobs:
       - run: pnpm test:packages
       - run: pnpm storybook:build
       - run: pnpm test:visual
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: windows-ui-failure
+          path: packages/ui/test-results
+          retention-days: 7
       - run: pnpm release:check-clean
 
   windows-desktop:
@@ -90,6 +96,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test:desktop:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: windows-desktop-failure
+          path: target/desktop-e2e-artifacts
+          retention-days: 7
       - run: pnpm release:check-clean
 
   windows-non-admin:
