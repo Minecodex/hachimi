@@ -25,3 +25,5 @@ CI 失败会阻止合并。修复失败后在同一个功能分支继续提交�
 桌面包的 Core Foundation / Core Graphics 测试依赖限定到 macOS。Cargo 测试启动器将绝对 PATH 中的系统 Git 解析为既有测试覆盖路径；生产 Worker 仍要求经过验证的 Git lease 与运行时版本，不增加生产 PATH 回退。
 
 架构扫描使用 Git 的文件清单，遵守忽略规则并覆盖隐藏的 Storybook 配置，不依赖 runner 额外安装 ripgrep。UI 与桌面 E2E 失败时上传截图、差异和驱动日志，供定位环境或功能失败。
+
+Windows Shell PTY 探测回复 ConPTY 的光标位置查询，并在读取线程仍工作时关闭控制台，随后等待输出结束。Git/工作区测试和桌面启动都经过同一个系统运行时入口；探测完成不能以绕过真实 PTY 能力校验来替代。

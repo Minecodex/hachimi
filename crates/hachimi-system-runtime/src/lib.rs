@@ -1699,6 +1699,8 @@ fn probe_shell_pty_blocking(
     probe_cwd: Option<&Path>,
 ) -> Result<(), SystemRuntimeError> {
     use std::io::Read as _;
+    #[cfg(windows)]
+    use std::io::Write as _;
 
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
@@ -1746,13 +1748,33 @@ fn probe_shell_pty_blocking(
             format!("shell PTY output could not be captured: {error}"),
         )
     })?;
+    #[cfg(windows)]
+    let mut writer = pair.master.take_writer().map_err(|error| {
+        SystemRuntimeError::new(
+            "system_shell_probe_failed",
+            format!("shell PTY input could not be opened: {error}"),
+        )
+    })?;
     let output = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         let mut buffer = [0_u8; 8 * 1024];
         while bytes.len() <= MAX_PROBE_OUTPUT {
             match reader.read(&mut buffer) {
                 Ok(0) | Err(_) => break,
-                Ok(read) => bytes.extend_from_slice(&buffer[..read]),
+                Ok(read) => {
+                    #[cfg(windows)]
+                    let scan_start = bytes.len().saturating_sub(3);
+                    bytes.extend_from_slice(&buffer[..read]);
+                    // ConPTY inherits the cursor and waits for a terminal reply
+                    // before allowing the shell to start. Handle split queries.
+                    #[cfg(windows)]
+                    if bytes[scan_start..]
+                        .windows(4)
+                        .any(|part| part == b"\x1b[6n")
+                    {
+                        let _ = writer.write_all(b"\x1b[1;1R");
+                    }
+                }
             }
         }
         bytes
@@ -1767,6 +1789,7 @@ fn probe_shell_pty_blocking(
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                drop(pair.master);
                 let _ = output.join();
                 return Err(SystemRuntimeError::new(
                     "system_shell_probe_timeout",
@@ -1775,6 +1798,7 @@ fn probe_shell_pty_blocking(
             }
             Err(error) => {
                 let _ = child.kill();
+                drop(pair.master);
                 let _ = output.join();
                 return Err(SystemRuntimeError::new(
                     "system_shell_probe_failed",
@@ -1783,6 +1807,9 @@ fn probe_shell_pty_blocking(
             }
         }
     };
+    // ConPTY retains its output pipe until the console closes. Close the
+    // master while the reader is still draining, then wait for its EOF.
+    drop(pair.master);
     let output = output.join().map_err(|_| {
         SystemRuntimeError::new("system_shell_probe_failed", "shell PTY reader panicked")
     })?;

@@ -1,5 +1,27 @@
 use super::*;
 
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_shell_pty_probe_negotiates_cursor_and_finishes_output_drain() {
+    let system = PathBuf::from(std::env::var_os("SystemRoot").expect("Windows system root"))
+        .join("System32");
+    for (executable, kind) in [
+        ("cmd.exe", ShellKind::CommandPrompt),
+        (
+            "WindowsPowerShell/v1.0/powershell.exe",
+            ShellKind::PowerShell,
+        ),
+    ] {
+        tokio::time::timeout(
+            Duration::from_secs(15),
+            probe_shell_pty(system.join(executable), kind, None, None),
+        )
+        .await
+        .expect("the probe must not wait indefinitely for ConPTY EOF")
+        .expect("the installed Windows shell supports a captured PTY");
+    }
+}
+
 #[cfg(unix)]
 fn write_executable(path: &Path, content: &str) {
     use std::os::unix::fs::PermissionsExt as _;
