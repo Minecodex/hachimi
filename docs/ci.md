@@ -33,3 +33,7 @@ Windows Shell PTY 探测回复 ConPTY 的光标位置查询，并在读取线程
 视觉测试浏览器固定 `Asia/Shanghai` 时区，与任务计划 fixture 的时区一致，时间标签不依赖 runner 的系统时区。同一 PR 的新提交会取消旧提交仍在执行的 CI，门禁只接受当前提交的完整结果。
 
 原生日期字段的 ISO 值单独断言，截图只隐藏该字段由 Windows 决定的日期文本格式，字段布局和其他页面内容仍完整比较。Windows Rust 任务同样检出 LFS 模型；桌面 E2E 按实际 WebView2 Runtime 版本选择 Microsoft 驱动，并将测试应用绑定到同一运行时目录。
+
+`cef_osr_probe` 的 AppKit 实现只在 macOS 编译；其他平台保留会明确报告不支持的入口。macOS 仍运行同一个真实 OSR 探测实现。
+
+桌面 E2E 显式启动隔离应用并等待本机 DevTools 端点，再让 Edge WebDriver 附加。每个会话与应用重启使用独立浏览器 profile，保留同一个应用数据目录；全部原有规格仍执行。该流程适用于 Pet 与 Workbench 多 WebView 应用，避免驱动自行启动时找不到 `DevToolsActivePort`。

@@ -606,6 +606,7 @@ const testEnvironment = {
   TAURI_CONFIG: JSON.stringify({ build: { devUrl: null } }),
   HACHIMI_DATA_DIR: data,
   HACHIMI_DESKTOP_E2E_WEBVIEW_DATA: webviewData,
+  HACHIMI_DESKTOP_E2E_ATTACH: "1",
   HACHIMI_DESKTOP_E2E_PROJECT_PATH: project,
   HACHIMI_SYSTEM_RUNTIME_TEST_GIT_GATE: systemGitGate,
   HACHIMI_DESKTOP_E2E_ATTACHMENT_PATH: attachment,
