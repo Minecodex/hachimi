@@ -1509,6 +1509,20 @@ wrap_render_handler! {
             let bounds = self.manager.tab_bounds(&self.tab_id);
             if let Some(info) = screen_info {
                 info.device_scale_factor = bounds.scale_factor;
+                let scale = bounds.scale_factor.max(0.5);
+                let logical = |physical: u32| {
+                    i32::try_from(((physical as f32) / scale).round().max(1.0) as u32)
+                        .unwrap_or(i32::MAX)
+                };
+                info.rect = Rect {
+                    x: 0,
+                    y: 0,
+                    width: logical(bounds.width),
+                    height: logical(bounds.height),
+                };
+                info.available_rect = info.rect.clone();
+                info.depth = 32;
+                info.depth_per_component = 8;
             }
             1
         }
