@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { buildDesktopE2e, verifyDesktopE2eBuild } from "./support/build.mjs";
 import { createOfficeArtifact } from "./support/office-artifacts.mjs";
 import { cleanupExecutableProcesses, terminateProcessTree } from "./support/processes.mjs";
 
@@ -41,13 +42,6 @@ async function allocateLoopbackPorts(count) {
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const corepackCli = join(
-  dirname(process.execPath),
-  "node_modules",
-  "corepack",
-  "dist",
-  "corepack.js",
-);
 const temporaryRoot = mkdtempSync(join(tmpdir(), "hachimi-desktop-e2e-"));
 const project = join(temporaryRoot, "project");
 const data = join(temporaryRoot, "data");
@@ -626,9 +620,12 @@ const testEnvironment = {
   HACHIMI_MANAGED_CHROMIUM: join(root, "apps/desktop/src-tauri/managed-chromium/chrome.exe"),
 };
 
-checked("node", ["scripts/prepare-workspace-worker.mjs", "dev"], {
-  env: testEnvironment,
-});
+if (process.env.HACHIMI_DESKTOP_E2E_PREBUILT === "1") {
+  verifyDesktopE2eBuild();
+} else {
+  buildDesktopE2e(testEnvironment);
+}
+console.log(`Desktop E2E WebView2 Runtime ${driverManifest.edgeDriverVersion}`);
 if (process.env.HACHIMI_DESKTOP_E2E_REAL_SANDBOX === "1") {
   delete testEnvironment.HACHIMI_DESKTOP_E2E_SANDBOX;
   const e2eDebugRoot = join(buildTarget, "debug");
@@ -637,32 +634,6 @@ if (process.env.HACHIMI_DESKTOP_E2E_REAL_SANDBOX === "1") {
   const marker = join(data, "sandbox/windows/setup.json");
   checked(setup, ["--marker", marker, "--launcher", launcher], { env: testEnvironment });
 }
-checked(process.execPath, [corepackCli, "pnpm", "--dir", "apps/desktop/web", "build"], {
-  env: testEnvironment,
-});
-const desktopPdb = join(buildTarget, "debug", "deps", "hachimi_desktop.pdb");
-if (!desktopPdb.startsWith(`${buildTarget}${sep}`)) {
-  throw new Error("Desktop E2E PDB path escaped the dedicated build directory.");
-}
-// MSVC can retain exhausted type-server state when repeatedly relinking this
-// large debug binary. The PDB is a disposable E2E build artifact; recreating
-// just this file avoids LNK1318 without cleaning any source or shared target.
-rmSync(desktopPdb, { force: true });
-checked(
-  process.execPath,
-  [
-    "scripts/run-with-rust.mjs",
-    "cargo",
-    "build",
-    "--offline",
-    "-p",
-    "hachimi-desktop",
-    "--features",
-    "desktop-e2e",
-  ],
-  { env: testEnvironment },
-);
-
 testEnvironment.HACHIMI_DESKTOP_E2E_APP = resolve(buildTarget, "debug/hachimi-desktop.exe");
 const consoleStopFile = join(artifacts, "console-window-monitor.stop");
 const consoleReportFile = join(artifacts, "console-window-monitor.json");

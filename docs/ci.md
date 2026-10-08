@@ -41,3 +41,7 @@ Windows Shell PTY 探测回复 ConPTY 的光标位置查询，并在读取线程
 跨多个设置页与真实 VRM/VRMA 预览的三个视觉场景使用 90 秒总预算，容纳 hosted Windows 软件渲染的加载时间；每个断言仍使用原有时限，截图比较与功能步骤完整保留。
 
 OSR 尺寸更新先通知屏幕缩放变化，再通知视图尺寸并请求新帧，覆盖逻辑尺寸相同的 Retina 到 1x 切换。CEF smoke 仍校验帧的实际物理尺寸，超时会记录最近帧尺寸。
+
+Windows 路径 smoke 将刚创建的临时测试目录所有者设为当前用户，满足沙箱的既有前提。Hosted runner 可能以管理员运行并默认使用 Administrators 组作为所有者；生产的用户所有权、NTFS、重解析点与硬链接校验继续执行。
+
+Hosted Windows 的桌面任务先构建带 `desktop-e2e` feature 的 debug 可执行文件，记录并校验 SHA-256，再以临时标准用户运行全部七个规格。子进程会断言自己没有管理员权限；测试账户和临时目录在结束时清理。该入口仅允许在 GitHub Actions 使用，编译阶段与交互验收使用同一个专用构建目录。此调整也用于验证上游记录的 [WebView2 elevated remote-debugging 问题](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5640) 是否解释 hosted runner 的端口不可达现象。
