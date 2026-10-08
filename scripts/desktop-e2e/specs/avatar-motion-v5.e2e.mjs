@@ -187,8 +187,7 @@ describe("Avatar Motion Runtime V5", () => {
       })
       .perform();
     await browser.waitUntil(
-      async () =>
-        Number(await $(".pet-avatar-canvas").getAttribute("data-motion-head-yaw")) > 20,
+      async () => Number(await $(".pet-avatar-canvas").getAttribute("data-motion-head-yaw")) > 20,
       { timeout: 2_000, timeoutMsg: "Cursor gaze did not produce the wider head turn" },
     );
     await browser

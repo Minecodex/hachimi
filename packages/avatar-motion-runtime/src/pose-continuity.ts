@@ -1,4 +1,5 @@
-import { MathUtils, Quaternion, Vector3 } from "three";
+import type { Quaternion } from "three";
+import { MathUtils, Vector3 } from "three";
 import type { SampledMotionPose } from "./motion-asset-library";
 
 export interface PoseStepMetrics {

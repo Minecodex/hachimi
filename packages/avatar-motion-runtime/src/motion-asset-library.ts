@@ -593,9 +593,7 @@ export function deserializeMotionFeatureIndex(
             Number(amount),
           ]),
         ),
-        ...(pose["hips"]
-          ? { hipsPosition: vector3From(pose["hips"]) }
-          : {}),
+        ...(pose["hips"] ? { hipsPosition: vector3From(pose["hips"]) } : {}),
         ...(pose["lookAt"]
           ? {
               lookAt: {
@@ -662,7 +660,11 @@ function vector2From(value: unknown): Vector2 {
 }
 
 function requiredVector(value: unknown, width: number): number[] {
-  if (!Array.isArray(value) || value.length !== width || value.some((part) => !finiteNumberValue(part)))
+  if (
+    !Array.isArray(value) ||
+    value.length !== width ||
+    value.some((part) => !finiteNumberValue(part))
+  )
     throw new Error("Invalid motion feature vector");
   return value as number[];
 }

@@ -24,9 +24,7 @@ export interface ScheduledBehavior<T> {
 export class BehaviorScheduler<T> {
   private readonly pending = new Map<string, ScheduledBehavior<T>>();
 
-  schedule(
-    behavior: Omit<ScheduledBehavior<T>, "deadlineAt"> & { maximumWaitMs?: number },
-  ): void {
+  schedule(behavior: Omit<ScheduledBehavior<T>, "deadlineAt"> & { maximumWaitMs?: number }): void {
     const maximumWaitMs = behavior.maximumWaitMs ?? (behavior.priority >= 70 ? 120 : 240);
     this.pending.set(behavior.category, {
       ...behavior,

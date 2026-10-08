@@ -154,8 +154,7 @@ export class MotionLabRuntime {
       (id) => commands.getMotionRuntimeAsset(id),
       {
         read: (cacheKey) => commands.readMotionFeatureIndex({ cacheKey }),
-        write: (cacheKey, payload) =>
-          commands.writeMotionFeatureIndex({ cacheKey, payload }),
+        write: (cacheKey, payload) => commands.writeMotionFeatureIndex({ cacheKey, payload }),
       },
     );
     this.scene.add(new AmbientLight(0xffffff, 0.7));

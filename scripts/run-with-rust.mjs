@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { resolveTestGit } from "./test-system-git.mjs";
 
 const cargoExecutableName = process.platform === "win32" ? "cargo.exe" : "cargo";
 const rustTool = process.argv[2];
@@ -37,6 +38,10 @@ const childEnvironment = {
   ...process.env,
   PATH: `${cargoBin}${delimiter}${process.env.PATH ?? ""}`,
 };
+
+if (rustTool === "cargo" && rustToolArguments[0] === "test") {
+  childEnvironment.HACHIMI_GIT_EXECUTABLE = resolveTestGit(childEnvironment);
+}
 
 function cargoTestProfileDirectory() {
   const profileIndex = rustToolArguments.findIndex(

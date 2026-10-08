@@ -126,7 +126,9 @@ html[data-appearance-theme="px"] .session-row-shell {
 }
 html[data-appearance-theme="px"] .session-row-shell.selected {
   background: var(--color-overlay-pressed);
-  box-shadow: inset 0 0 0 2px var(--deco-ink), 3px 3px 0 var(--deco-ink);
+  box-shadow:
+    inset 0 0 0 2px var(--deco-ink),
+    3px 3px 0 var(--deco-ink);
 }
 html[data-appearance-theme="px"] .session-unread-dot {
   border-radius: 0;
@@ -136,7 +138,9 @@ html[data-appearance-theme="px"] .session-running-spinner {
   border-radius: 0;
 }
 @keyframes deco-px-blink {
-  50% { opacity: 0.15; }
+  50% {
+    opacity: 0.15;
+  }
 }
 
 html[data-appearance-theme="px"] .welcome-block h1 {
@@ -368,7 +372,11 @@ html[data-appearance-theme="crm"] .composer::before {
   transform: translateX(-50%) rotate(-2deg);
   width: 110px;
   height: 22px;
-  background: repeating-linear-gradient(45deg, var(--deco-tape-a) 0 8px, var(--deco-tape-b) 8px 16px);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--deco-tape-a) 0 8px,
+    var(--deco-tape-b) 8px 16px
+  );
   border-radius: 3px;
   box-shadow: 0 2px 5px rgb(0 0 0 / 8%);
   opacity: 0.9;
@@ -412,7 +420,11 @@ html[data-appearance-theme="crm"] .settings-card::after {
   right: 26px;
   width: 84px;
   height: 20px;
-  background: repeating-linear-gradient(45deg, var(--deco-tape-c) 0 8px, var(--deco-tape-d) 8px 16px);
+  background: repeating-linear-gradient(
+    45deg,
+    var(--deco-tape-c) 0 8px,
+    var(--deco-tape-d) 8px 16px
+  );
   transform: rotate(3deg);
   border-radius: 3px;
   box-shadow: 0 2px 4px rgb(0 0 0 / 6%);
@@ -422,7 +434,9 @@ html[data-appearance-theme="crm"] .settings-card::after {
 html[data-appearance-theme="crm"] .approval-card {
   border: 2px solid var(--color-bg-accent);
   border-radius: 20px;
-  box-shadow: 0 0 0 4px #ffe3ec, var(--shadow-floating);
+  box-shadow:
+    0 0 0 4px #ffe3ec,
+    var(--shadow-floating);
 }
 
 html[data-appearance-theme="crm"] .home-main [data-component="button"],
@@ -571,8 +585,15 @@ html[data-appearance-theme="nya"] .welcome-mark {
   background: linear-gradient(135deg, var(--deco-amber), var(--deco-ember));
   box-shadow: 0 0 32px rgb(255 138 92 / 40%);
 }
-html[data-appearance-theme="nya"] .welcome-mark::before { top: -10px; left: 8px; }
-html[data-appearance-theme="nya"] .welcome-mark::after { top: -10px; right: 8px; border-bottom-color: var(--deco-ember); }
+html[data-appearance-theme="nya"] .welcome-mark::before {
+  top: -10px;
+  left: 8px;
+}
+html[data-appearance-theme="nya"] .welcome-mark::after {
+  top: -10px;
+  right: 8px;
+  border-bottom-color: var(--deco-ember);
+}
 html[data-appearance-theme="nya"] .welcome-mark span {
   font-family: "ZCOOL KuaiLe", var(--font-ui);
 }
@@ -595,7 +616,9 @@ html[data-appearance-theme="nya"] .guide-cards button:hover {
 
 html[data-appearance-theme="nya"] .composer {
   border: 1px solid rgb(255 182 77 / 30%);
-  box-shadow: 0 0 28px rgb(255 182 77 / 10%), var(--shadow-floating);
+  box-shadow:
+    0 0 28px rgb(255 182 77 / 10%),
+    var(--shadow-floating);
 }
 html[data-appearance-theme="nya"] .composer::before {
   top: -9px;
@@ -658,7 +681,12 @@ html[data-appearance-theme="tora"] {
   --deco-orange: #ff8c2e;
   --deco-orange-soft: #ffb26e;
   --deco-cream: #ffe3c2;
-  --deco-tabby: repeating-linear-gradient(115deg, #ff8c2e 0 16px, #ffb26e 16px 26px, #ffe3c2 26px 42px);
+  --deco-tabby: repeating-linear-gradient(
+    115deg,
+    #ff8c2e 0 16px,
+    #ffb26e 16px 26px,
+    #ffe3c2 26px 42px
+  );
 }
 
 html[data-appearance-theme="tora"] .home-main,
@@ -692,7 +720,11 @@ html[data-appearance-theme="tora"] .project-sidebar-brand strong::after {
 }
 html[data-appearance-theme="tora"] .hachimi-mini-mark {
   border-radius: 10px;
-  background: repeating-linear-gradient(115deg, var(--deco-orange) 0 8px, var(--deco-orange-soft) 8px 14px);
+  background: repeating-linear-gradient(
+    115deg,
+    var(--deco-orange) 0 8px,
+    var(--deco-orange-soft) 8px 14px
+  );
 }
 
 html[data-appearance-theme="tora"] [data-testid="workbench-new-task"] {
@@ -741,7 +773,11 @@ html[data-appearance-theme="tora"] .approval-card::before {
 
 html[data-appearance-theme="tora"] .welcome-mark {
   border-radius: 20px;
-  background: repeating-linear-gradient(115deg, var(--deco-orange) 0 12px, var(--deco-orange-soft) 12px 20px);
+  background: repeating-linear-gradient(
+    115deg,
+    var(--deco-orange) 0 12px,
+    var(--deco-orange-soft) 12px 20px
+  );
   box-shadow: 0 10px 24px rgb(255 140 46 / 35%);
 }
 html[data-appearance-theme="tora"] .welcome-mark span {
@@ -789,7 +825,9 @@ html[data-appearance-theme="tora"] .theme-card {
 html[data-appearance-theme="tora"] .approval-card {
   border: 2px solid var(--color-bg-accent);
   border-radius: 18px;
-  box-shadow: 0 0 0 4px #ffe9cf, var(--shadow-floating);
+  box-shadow:
+    0 0 0 4px #ffe9cf,
+    var(--shadow-floating);
 }
 
 html[data-appearance-theme="tora"] .home-main [data-component="button"],
@@ -909,7 +947,9 @@ html[data-appearance-theme="maho"] .session-row-shell {
   position: relative;
 }
 html[data-appearance-theme="maho"] .session-row-shell.selected {
-  box-shadow: 0 0 0 1.5px rgb(255 122 217 / 45%), 0 4px 14px rgb(157 123 255 / 18%);
+  box-shadow:
+    0 0 0 1.5px rgb(255 122 217 / 45%),
+    0 4px 14px rgb(157 123 255 / 18%);
 }
 html[data-appearance-theme="maho"] .session-row-shell.selected::before {
   content: "";
@@ -1023,7 +1063,9 @@ html[data-appearance-theme="maho"] .theme-card {
 html[data-appearance-theme="maho"] .approval-card {
   border: 1.5px solid var(--color-bg-accent);
   border-radius: 18px;
-  box-shadow: 0 0 0 4px rgb(255 122 217 / 12%), var(--shadow-floating);
+  box-shadow:
+    0 0 0 4px rgb(255 122 217 / 12%),
+    var(--shadow-floating);
 }
 
 html[data-appearance-theme="maho"] .home-main [data-component="button"],
@@ -1050,7 +1092,9 @@ html[data-appearance-theme="maho"] .theme-card {
 }
 html[data-appearance-theme="maho"] .theme-card[data-state="selected"] {
   border-color: var(--color-bg-accent);
-  box-shadow: 0 0 0 3px rgb(255 122 217 / 20%), var(--shadow-raised);
+  box-shadow:
+    0 0 0 3px rgb(255 122 217 / 20%),
+    var(--shadow-raised);
 }
 
 html[data-appearance-theme="maho"] .settings-page-heading h1 {

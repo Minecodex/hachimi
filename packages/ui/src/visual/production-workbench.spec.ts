@@ -1526,9 +1526,7 @@ test("appearance controls update runtime tokens and support wheel and keyboard",
     .poll(() => root.evaluate((element) => element.style.getPropertyValue("--appearance-panel")))
     .not.toBe(panelBefore);
   await expect(root).toHaveCSS("--appearance-contrast", "100");
-  await expect(
-    page.locator('[data-component="badge"]', { hasText: "已保存" }),
-  ).toBeVisible();
+  await expect(page.locator('[data-component="badge"]', { hasText: "已保存" })).toBeVisible();
 });
 
 test("built-in themes and font presets switch the complete interface", async ({ page }) => {
