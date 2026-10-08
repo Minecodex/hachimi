@@ -4,6 +4,7 @@ import type { MotionImportCommitRequest } from "../../../contracts/src/generated
 import { resolve } from "node:path";
 import {
   appearance,
+  defaultShellFixture,
   directTerminalFixture,
   hostSettingsMocks,
   initialSettings,
@@ -11,6 +12,7 @@ import {
   motionEntry,
   runtimeAssessment,
   runtimeMocks,
+  systemRuntimeFixture,
   taskRunFixtures,
   taskScheduleFixtures,
   workbenchEnvironmentFixture,
@@ -32,12 +34,14 @@ export async function installTauriMocks(
   await page.addInitScript(
     ({
       appearance,
+      defaultShellFixture,
       directTerminalFixture,
       hostSettingsMocks,
       initialSettings,
       motionEntry,
       runtimeAssessment,
       runtimeMocks,
+      systemRuntimeFixture,
       taskRunFixtures,
       taskScheduleFixtures,
       workbenchEnvironmentFixture,
@@ -346,6 +350,10 @@ export async function installTauriMocks(
         callbacks,
         async invoke(command: string, args: Record<string, unknown> = {}) {
           calls.push({ command, args });
+          if (command === "get_system_runtime" || command === "refresh_system_runtime") {
+            return systemRuntimeFixture;
+          }
+          if (command === "get_default_shell") return defaultShellFixture;
           if (command === "initialize_agent_control") {
             return {
               protocolVersion: 31,
@@ -928,12 +936,14 @@ export async function installTauriMocks(
     },
     {
       appearance,
+      defaultShellFixture,
       directTerminalFixture,
       hostSettingsMocks,
       initialSettings,
       motionEntry,
       runtimeAssessment,
       runtimeMocks,
+      systemRuntimeFixture,
       taskRunFixtures,
       taskScheduleFixtures,
       workbenchEnvironmentFixture,

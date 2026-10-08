@@ -4,6 +4,11 @@ Copyright 2026 Hachimi contributors
 The Hachimi source code is licensed under the Apache License, Version 2.0.
 See LICENSE for the complete terms.
 
+The UI bundles Inter, Noto Sans SC, and JetBrains Mono through the pinned
+@fontsource packages, version 5.3.0, under the SIL Open Font License 1.1.
+Their full copyright and license texts are in packages/ui/licenses in the
+source tree and resources/licenses/ui-fonts in desktop distributions.
+
 Official Hachimi binary distributions include third-party assets with their
 own licenses. Those asset terms are not replaced by the Apache-2.0 license.
 

@@ -820,3 +820,39 @@ export async function installMotionLabAssets(page: Page) {
     }),
   );
 }
+import type { ShellLaunchSpec, SystemRuntimeSnapshot } from "../../../contracts/src/generated";
+
+export const systemRuntimeFixture: SystemRuntimeSnapshot = {
+  revision: 1,
+  warnings: [],
+  tools: [
+    {
+      tool: "git",
+      state: "ready",
+      executablePath: "C:\\Program Files\\Git\\cmd\\git.exe",
+      version: "2.48.1",
+      source: "process_environment",
+      capabilities: ["git_inspect", "git_local_mutation", "git_worktree"],
+      errorCode: null,
+      observedAtMs: 1_774_184_520_000,
+    },
+    {
+      tool: "default_shell",
+      state: "ready",
+      executablePath: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      version: "5.1",
+      source: "process_environment",
+      capabilities: ["shell_command", "shell_interactive"],
+      errorCode: null,
+      observedAtMs: 1_774_184_520_000,
+    },
+  ],
+};
+
+export const defaultShellFixture: ShellLaunchSpec = {
+  executablePath: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  kind: "power_shell",
+  interactiveArgs: ["-NoLogo", "-NoProfile"],
+  commandArgs: ["-Command"],
+  runtimeRevision: 1,
+};
