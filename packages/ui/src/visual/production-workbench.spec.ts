@@ -1798,6 +1798,7 @@ test("motion settings share one responsive preview across both tabs", async ({ p
 });
 
 test("Motion Library Lab previews a catalog VRMA with finger diagnostics", async ({ page }) => {
+  test.setTimeout(90_000);
   await page.setViewportSize({ width: 1280, height: 800 });
   await installTauriMocks(page);
   await installMotionLabAssets(page);

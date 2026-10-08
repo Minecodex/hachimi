@@ -72,6 +72,7 @@ export async function launchAutomationApplication(application, profileRoot, args
 export function attachedWebviewCapabilities(debuggerAddress) {
   return {
     browserName: "webview2",
+    "wdio:enforceWebDriverClassic": true,
     "ms:edgeChromium": true,
     "ms:edgeOptions": { debuggerAddress },
   };

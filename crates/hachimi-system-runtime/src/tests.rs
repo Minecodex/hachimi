@@ -357,7 +357,7 @@ async fn windows_registry_or_standard_install_is_found_without_process_path() {
         );
         return;
     }
-    let discovered = discover_git(&environment).await;
+    let discovered = discover_git_from_snapshot(&environment, false).await;
     let git = discovered
         .resolved
         .expect("registry or standard Git should not need process PATH");
