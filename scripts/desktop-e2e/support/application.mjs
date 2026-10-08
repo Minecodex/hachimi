@@ -12,7 +12,8 @@ export async function launchAutomationApplication(application, profileRoot, args
   const reservation = createServer();
   await new Promise((resolve, reject) => {
     reservation.once("error", reject);
-    reservation.listen(0, "127.0.0.1", resolve);
+    const requestedPort = Number(process.env.HACHIMI_DESKTOP_E2E_DEBUG_PORT || 0);
+    reservation.listen(requestedPort, "127.0.0.1", resolve);
   });
   const port = reservation.address().port;
   await new Promise((resolve) => reservation.close(resolve));

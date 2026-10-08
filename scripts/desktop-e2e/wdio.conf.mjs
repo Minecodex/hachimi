@@ -32,7 +32,10 @@ export const config = {
   maxInstances: 1,
   capabilities: [
     attachToApplication
-      ? { maxInstances: 1, ...attachedWebviewCapabilities("127.0.0.1:1") }
+      ? {
+          maxInstances: 1,
+          ...attachedWebviewCapabilities(`127.0.0.1:${process.env.HACHIMI_DESKTOP_E2E_DEBUG_PORT}`),
+        }
       : {
           maxInstances: 1,
           "tauri:options": {

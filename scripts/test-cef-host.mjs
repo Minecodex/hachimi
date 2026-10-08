@@ -100,10 +100,15 @@ function waitFor(predicate, description, timeoutMs = 20000) {
   const immediate = messages.find(predicate);
   if (immediate) return Promise.resolve(immediate);
   return new Promise((resolveWait, rejectWait) => {
-    const timer = setTimeout(
-      () => rejectWait(new Error(`timeout waiting for ${description}`)),
-      timeoutMs,
-    );
+    const timer = setTimeout(() => {
+      const frames = messages
+        .filter((message) => message.event?.kind === "frame_ready")
+        .slice(-8)
+        .map((message) => `${message.event.width}x${message.event.height}`);
+      rejectWait(
+        new Error(`timeout waiting for ${description}; recent frames=${frames.join(",")}`),
+      );
+    }, timeoutMs);
     waiters.push((message) => {
       if (predicate(message)) {
         clearTimeout(timer);

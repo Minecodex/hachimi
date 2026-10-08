@@ -561,7 +561,7 @@ if (!mcpAddress || typeof mcpAddress === "string")
 const mcpUrl = `http://127.0.0.1:${mcpAddress.port}/mcp`;
 const browserFixtureUrl = `http://127.0.0.1:${mcpAddress.port}/browser-fixture`;
 const browserFixtureOrigin = `http://127.0.0.1:${mcpAddress.port}`;
-const [gatewayPort, gatewayWakePort] = await allocateLoopbackPorts(2);
+const [gatewayPort, gatewayWakePort, debugPort] = await allocateLoopbackPorts(3);
 
 function checked(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -607,6 +607,7 @@ const testEnvironment = {
   HACHIMI_DATA_DIR: data,
   HACHIMI_DESKTOP_E2E_WEBVIEW_DATA: webviewData,
   HACHIMI_DESKTOP_E2E_ATTACH: "1",
+  HACHIMI_DESKTOP_E2E_DEBUG_PORT: String(debugPort),
   HACHIMI_DESKTOP_E2E_PROJECT_PATH: project,
   HACHIMI_SYSTEM_RUNTIME_TEST_GIT_GATE: systemGitGate,
   HACHIMI_DESKTOP_E2E_ATTACHMENT_PATH: attachment,

@@ -490,8 +490,11 @@ impl TabManager {
         if self.is_osr()
             && let Some(host) = host.as_ref()
         {
-            host.was_resized();
             host.notify_screen_info_changed();
+            host.was_resized();
+            // A Retina-to-1x transition can keep the logical viewport unchanged.
+            // Request a fresh paint after updating screen scale and view bounds.
+            host.invalidate(cef::PaintElementType::VIEW);
         }
         if let Some(window) = window {
             move_window(window, bounds);
