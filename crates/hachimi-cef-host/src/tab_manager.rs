@@ -52,6 +52,7 @@ struct ManagerState {
     /// macOS prototype OSR mode (P4-A): render windowless, frames land in
     /// `frames_dir` for the desktop to composite.
     osr: bool,
+    #[cfg(target_os = "macos")]
     frames_dir: Option<PathBuf>,
     context_ready: bool,
     shutting_down: bool,
@@ -69,22 +70,18 @@ pub struct TabManager {
 }
 
 impl TabManager {
-    #[cfg(not(target_os = "macos"))]
-    pub fn new(parent_hwnd: usize, sink: EventSink) -> Self {
-        Self::new_with_osr(parent_hwnd, sink, false, None)
-    }
-
     pub fn new_with_osr(
         parent_hwnd: usize,
         sink: EventSink,
         osr: bool,
-        frames_dir: Option<PathBuf>,
+        _frames_dir: Option<PathBuf>,
     ) -> Self {
         Self {
             sink,
             state: Arc::new(Mutex::new(ManagerState {
                 osr,
-                frames_dir,
+                #[cfg(target_os = "macos")]
+                frames_dir: _frames_dir,
                 parent_hwnd,
                 ..ManagerState::default()
             })),
@@ -336,10 +333,9 @@ impl TabManager {
             width: i32::try_from(bounds.width).unwrap_or(i32::MAX),
             height: i32::try_from(bounds.height).unwrap_or(i32::MAX),
         };
-        let (osr, parent_hwnd) = {
-            let state = self.state.lock();
-            (state.osr, state.parent_hwnd)
-        };
+        let parent_hwnd = self.state.lock().parent_hwnd;
+        #[cfg(target_os = "macos")]
+        let osr = self.state.lock().osr;
         #[cfg(target_os = "windows")]
         let parent = sys::HWND(parent_hwnd as *mut sys::HWND__);
         #[cfg(not(target_os = "windows"))]
