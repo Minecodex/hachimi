@@ -37,3 +37,5 @@ Windows Shell PTY 探测回复 ConPTY 的光标位置查询，并在读取线程
 `cef_osr_probe` 的 AppKit 实现只在 macOS 编译；其他平台保留会明确报告不支持的入口。macOS 仍运行同一个真实 OSR 探测实现。
 
 桌面 E2E 显式启动隔离应用并等待本机 DevTools 端点，再让 Edge WebDriver 附加。每个会话与应用重启使用独立浏览器 profile，保留同一个应用数据目录；全部原有规格仍执行。该流程适用于 Pet 与 Workbench 多 WebView 应用，避免驱动自行启动时找不到 `DevToolsActivePort`。
+
+跨多个设置页与真实 VRM/VRMA 预览的三个视觉场景使用 90 秒总预算，容纳 hosted Windows 软件渲染的加载时间；每个断言仍使用原有时限，截图比较与功能步骤完整保留。

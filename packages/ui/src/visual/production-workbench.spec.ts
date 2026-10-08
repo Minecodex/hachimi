@@ -1596,6 +1596,7 @@ test("appearance save failures roll the preview back to the confirmed settings",
 });
 
 test("model, voice, and pet settings use their live command-backed controls", async ({ page }) => {
+  test.setTimeout(90_000);
   await installTauriMocks(page);
   await installMotionLabAssets(page);
 
@@ -1678,6 +1679,7 @@ test("model, voice, and pet settings use their live command-backed controls", as
 test("motion settings keep one motion per region and import an optional binding", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
   await installTauriMocks(page);
   await installMotionLabAssets(page);
   await page.goto("http://127.0.0.1:1420/workbench.html?route=settings/motion");
@@ -1745,6 +1747,7 @@ test("motion settings keep one motion per region and import an optional binding"
 });
 
 test("motion settings share one responsive preview across both tabs", async ({ page }) => {
+  test.setTimeout(90_000);
   await page.setViewportSize({ width: 1280, height: 800 });
   await installTauriMocks(page);
   await installMotionLabAssets(page);
