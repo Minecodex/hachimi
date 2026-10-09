@@ -152,6 +152,8 @@ export function TerminalPanel(props: {
   }
 
   async function closeTab(record: ProcessSessionRecord) {
+    // Explicit close must invalidate the shared launch before the panel unmounts.
+    automaticStarts.delete(props.projectId);
     hiddenProcessIds.add(record.id);
     const current = untrack(tabs);
     const index = current.findIndex((tab) => tab.record.id === record.id);

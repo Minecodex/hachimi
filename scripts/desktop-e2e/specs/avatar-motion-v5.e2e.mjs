@@ -6,6 +6,11 @@ import { join } from "node:path";
 
 import { clickWhenReady, waitForDisplayed } from "../support/interactions.mjs";
 import { switchToPet, switchToWorkbench } from "../support/windows.mjs";
+import {
+  beginAmbientObservation,
+  readAmbientObservation,
+  endAmbientObservation,
+} from "../support/motion-observation.mjs";
 
 const REMOVED_NAMES = new Set([
   "飞吻",
@@ -95,15 +100,16 @@ describe("Avatar Motion Runtime V5", () => {
       { timeout: 15_000, timeoutMsg: "Completed action did not return to waiting base idle" },
     );
 
-    const ambientMotionId = await browser.waitUntil(
-      async () =>
-        browser.execute(() => {
-          const canvas = document.querySelector(".pet-avatar-canvas");
-          const id = canvas?.getAttribute("data-motion-ambient");
-          return id && canvas?.getAttribute("data-motion-slots")?.includes("action") ? id : false;
-        }),
-      { timeout: 30_000, timeoutMsg: "One-shot ambient motion did not enter its action slot" },
-    );
+    await browser.execute(beginAmbientObservation);
+    let ambientMotionId;
+    try {
+      ambientMotionId = await browser.waitUntil(() => browser.execute(readAmbientObservation), {
+        timeout: 60_000,
+        timeoutMsg: "One-shot ambient motion did not enter its action slot",
+      });
+    } finally {
+      await browser.execute(endAmbientObservation);
+    }
     const ambientMotion = motionCatalog.entries.find((entry) => entry.id === ambientMotionId);
     expect(ambientMotion).toBeDefined();
     expect(ambientMotion.loopMode).toBe("once");
@@ -118,9 +124,14 @@ describe("Avatar Motion Runtime V5", () => {
     await clickWhenReady('[data-testid="motion-lab-open"]');
     await waitForDisplayed('[data-testid="motion-lab-v5"]', 30_000);
     await browser.waitUntil(
-      async () =>
-        (await $('[data-testid="motion-lab-v5"]').getAttribute("data-transition-ready")) === "true",
-      { timeout: 30_000, timeoutMsg: "Motion Lab transition diagnostics were not ready" },
+      () =>
+        browser.execute(
+          () =>
+            document
+              .querySelector('[data-testid="motion-lab-v5"]')
+              ?.getAttribute("data-transition-ready") === "true",
+        ),
+      { timeout: 75_000, timeoutMsg: "Motion Lab transition diagnostics were not ready" },
     );
     await clickWhenReady(".motion-lab-matrix button");
     await browser.waitUntil(

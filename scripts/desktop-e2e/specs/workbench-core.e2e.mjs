@@ -104,22 +104,28 @@ async function submitPlanUserInput() {
   await clickWhenReady(selector);
 }
 
+const powerShellProcesses = new Set();
+
 async function writeTerminal(command) {
   const terminal = await $(".terminal-session.active .xterm");
   await terminal.waitForDisplayed({ timeout: 20_000 });
   await terminal.click();
-  // The verified default shell can be CMD on a hosted standard-user profile.
-  // Enter PowerShell explicitly before sending the PowerShell-only fixture.
-  await browser.keys("powershell.exe -NoProfile");
-  await browser.keys("Enter");
-  await browser.waitUntil(
-    async () =>
-      (await $(".terminal-session.active .xterm-rows").getText()).includes("Windows PowerShell"),
-    {
-      timeout: 20_000,
-      timeoutMsg: "PowerShell fixture interpreter did not start",
-    },
-  );
+  const processId = await $(".terminal-session.active").getAttribute("data-process-id");
+  if (!powerShellProcesses.has(processId)) {
+    // The verified default shell can be CMD on a hosted standard-user profile.
+    // Enter PowerShell explicitly before sending the PowerShell-only fixture.
+    await browser.keys("powershell.exe -NoProfile");
+    await browser.keys("Enter");
+    await browser.waitUntil(
+      async () =>
+        (await $(".terminal-session.active .xterm-rows").getText()).includes("Windows PowerShell"),
+      {
+        timeout: 20_000,
+        timeoutMsg: "PowerShell fixture interpreter did not start",
+      },
+    );
+    powerShellProcesses.add(processId);
+  }
   await browser.keys(command);
   await browser.keys("Enter");
 }

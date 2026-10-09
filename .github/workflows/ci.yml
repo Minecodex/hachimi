@@ -87,6 +87,8 @@ jobs:
   windows-desktop:
     runs-on: windows-latest
     timeout-minutes: 90
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/desktop-e2e-build
     steps:
       - uses: actions/checkout@v4
         with:
