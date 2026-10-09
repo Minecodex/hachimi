@@ -283,6 +283,13 @@ describe("Hachimi Workbench core lifecycle", () => {
       expect.stringContaining("desktop-e2e-evidence.txt"),
     );
 
+    // The wide Files inspector overlays the timeline at this window size.
+    // Close it before using the run summary's real pointer target.
+    await clickWhenReady('[data-testid="workbench-toggle-inspector"]');
+    await browser.waitUntil(async () => !(await isDisplayed(".workbench-inspector")), {
+      timeout: 5_000,
+      timeoutMsg: "Files inspector did not close before run review",
+    });
     await clickWhenReady(
       '[data-testid="workbench-review-run-file"][data-path="desktop-e2e-evidence.txt"]',
     );
@@ -343,6 +350,9 @@ describe("Hachimi Workbench core lifecycle", () => {
   });
 
   it("recovers a Run interrupted while waiting for approval", async () => {
+    if (await isDisplayed(".workbench-inspector")) {
+      await clickWhenReady('[data-testid="workbench-toggle-inspector"]');
+    }
     await expandFirstProject();
     await clickWhenReady('[data-testid^="project-new-task-"]');
     await $('[data-testid="workbench-composer-input"]').waitForDisplayed({ timeout: 5_000 });

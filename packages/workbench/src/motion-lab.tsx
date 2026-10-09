@@ -161,7 +161,11 @@ export function MotionLabPage() {
   }
 
   return (
-    <div class="motion-lab-page" data-testid="motion-lab-v5">
+    <div
+      class="motion-lab-page"
+      data-testid="motion-lab-v5"
+      data-transition-ready={Boolean(transitionDiagnostic())}
+    >
       <PageHeading
         class="motion-lab-header"
         eyebrow="Avatar Motion Runtime V5"

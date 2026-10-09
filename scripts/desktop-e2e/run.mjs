@@ -73,7 +73,10 @@ if (
 mkdirSync(project, { recursive: true });
 mkdirSync(data, { recursive: true });
 writeFileSync(join(data, ".hachimi-data-root"), "com.hachimi.desktop", "utf8");
-if (process.env.HACHIMI_DESKTOP_E2E_SPEC?.includes("avatar-motion-v5.e2e.mjs")) {
+if (
+  !process.env.HACHIMI_DESKTOP_E2E_SPEC ||
+  process.env.HACHIMI_DESKTOP_E2E_SPEC.includes("avatar-motion-v5.e2e.mjs")
+) {
   seedAvatarMotionV5Fixtures(root, data);
 }
 const loopbackToken = "hachimi-desktop-e2e-loopback-token-00000001";

@@ -961,8 +961,13 @@ mod tests {
         git(&["add", "main.txt"]);
         git(&["commit", "-m", "main"]);
 
-        let worker =
-            WorkerContext::new(directory.path(), "checkout", 1, "token").expect("worker context");
+        let worker = WorkerContext::new(
+            crate::test_support::fixture_root(&directory),
+            "checkout",
+            1,
+            "token",
+        )
+        .expect("worker context");
         let scope = DiffScope::Branch {
             checkout_id: hachimi_protocol::CheckoutId::new("checkout"),
             branch: "feature".into(),
@@ -1004,8 +1009,13 @@ mod tests {
         std::fs::write(directory.path().join("notes.txt"), "first\nsecond\n").expect("notes");
         std::fs::write(directory.path().join("asset.bin"), [0_u8, 1, 2]).expect("binary");
 
-        let worker =
-            WorkerContext::new(directory.path(), "checkout", 1, "token").expect("worker context");
+        let worker = WorkerContext::new(
+            crate::test_support::fixture_root(&directory),
+            "checkout",
+            1,
+            "token",
+        )
+        .expect("worker context");
         let scope = DiffScope::Checkout {
             checkout_id: hachimi_protocol::CheckoutId::new("checkout"),
         };

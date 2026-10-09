@@ -1,5 +1,7 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+/* global document */
 
 import { cleanupExecutableProcesses } from "./support/processes.mjs";
 import {
@@ -70,9 +72,28 @@ export const config = {
   },
   afterTest: async (_test, _context, result) => {
     if (!result.passed) {
-      const safeName = `failure-${Date.now()}.png`;
+      const safeName = `failure-${Date.now()}`;
       try {
-        await browser.saveScreenshot(resolve(artifacts, safeName));
+        await browser.saveScreenshot(resolve(artifacts, `${safeName}.png`));
+        writeFileSync(resolve(artifacts, `${safeName}.html`), await browser.getPageSource());
+        const snapshot = await browser.executeAsync((done) => {
+          const runId = document
+            .querySelector('[data-testid="workbench-session-timeline"]')
+            ?.getAttribute("data-run-id");
+          if (!runId) return done(null);
+          const invoke = window.__TAURI_INTERNALS__.invoke;
+          invoke("list_workbench_sessions", { projectId: null })
+            .then((sessions) => {
+              const session = sessions.find((entry) => entry.latestRun?.id === runId);
+              return session
+                ? invoke("get_workbench_session", { sessionId: session.session.id })
+                : null;
+            })
+            .then(done, (error) => done({ diagnosticError: String(error) }));
+        });
+        if (snapshot) {
+          writeFileSync(resolve(artifacts, `${safeName}.json`), JSON.stringify(snapshot, null, 2));
+        }
       } catch {
         // Preserve the original failure when a restart already invalidated the
         // WebDriver session and no screenshot can be captured.

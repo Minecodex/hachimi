@@ -202,7 +202,13 @@ mod tests {
         std::fs::write(temp.path().join("tracked.txt"), "after\n").expect("write");
         git(temp.path(), &["add", "tracked.txt"]);
         std::fs::write(temp.path().join("new.txt"), "new\n").expect("write");
-        let worker = WorkerContext::new(temp.path(), "checkout", 1, "token").expect("worker");
+        let worker = WorkerContext::new(
+            crate::test_support::fixture_root(&temp),
+            "checkout",
+            1,
+            "token",
+        )
+        .expect("worker");
         let output = worker
             .git_review_diff(&ReviewTarget::UncommittedChanges)
             .await

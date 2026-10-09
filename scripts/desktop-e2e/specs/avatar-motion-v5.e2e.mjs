@@ -119,10 +119,8 @@ describe("Avatar Motion Runtime V5", () => {
     await clickWhenReady('[data-testid="motion-lab-open"]');
     await waitForDisplayed('[data-testid="motion-lab-v5"]', 30_000);
     await browser.waitUntil(
-      async () => {
-        const text = await $(".motion-lab-diagnostics").getText();
-        return text.includes("Transition") || text.includes("切换");
-      },
+      async () =>
+        (await $('[data-testid="motion-lab-v5"]').getAttribute("data-transition-ready")) === "true",
       { timeout: 30_000, timeoutMsg: "Motion Lab transition diagnostics were not ready" },
     );
     await clickWhenReady(".motion-lab-matrix button");
