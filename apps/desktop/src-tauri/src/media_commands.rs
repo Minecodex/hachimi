@@ -730,7 +730,7 @@ pub(super) fn reset_motion_binding(
 }
 
 #[tauri::command]
-pub(super) fn get_motion_runtime_asset(
+pub(super) async fn get_motion_runtime_asset(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
     request: ResourceEntryRequest,
@@ -744,21 +744,27 @@ pub(super) fn get_motion_runtime_asset(
         }
         _ => return Err(CommandError::new("unknown_window", "不允许的窗口")),
     }
-    Ok(state
-        .motion_catalog
-        .read()
-        .asset_for(&request.id)
-        .map(|asset| {
-            let asset_url = motion_asset_url(&asset.entry.id);
-            MotionRuntimeAsset {
-                entry: asset.entry,
-                asset_url,
-            }
-        }))
+    let app = window.app_handle().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<DesktopState>();
+        state
+            .motion_catalog
+            .read()
+            .asset_for(&request.id)
+            .map(|asset| {
+                let asset_url = motion_asset_url(&asset.entry.id);
+                MotionRuntimeAsset {
+                    entry: asset.entry,
+                    asset_url,
+                }
+            })
+    })
+    .await
+    .map_err(|error| CommandError::operation("motion_asset_dispatch_failed", error))
 }
 
 #[tauri::command]
-pub(super) fn read_motion_feature_index(
+pub(super) async fn read_motion_feature_index(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
     request: MotionFeatureCacheReadRequest,
@@ -768,15 +774,21 @@ pub(super) fn read_motion_feature_index(
         "workbench" => state.authorize(&window, ControlMethod::MotionRead)?,
         _ => return Err(CommandError::new("unknown_window", "不允许的窗口")),
     };
-    state
-        .motion_catalog
-        .read()
-        .read_feature_index(&request.cache_key)
-        .map_err(|error| CommandError::operation("motion_feature_cache_read_failed", error))
+    let app = window.app_handle().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<DesktopState>();
+        state
+            .motion_catalog
+            .read()
+            .read_feature_index(&request.cache_key)
+            .map_err(|error| CommandError::operation("motion_feature_cache_read_failed", error))
+    })
+    .await
+    .map_err(|error| CommandError::operation("motion_feature_cache_dispatch_failed", error))?
 }
 
 #[tauri::command]
-pub(super) fn write_motion_feature_index(
+pub(super) async fn write_motion_feature_index(
     window: WebviewWindow,
     state: State<'_, DesktopState>,
     request: MotionFeatureCacheWriteRequest,
@@ -786,11 +798,17 @@ pub(super) fn write_motion_feature_index(
         "workbench" => state.authorize(&window, ControlMethod::MotionRead)?,
         _ => return Err(CommandError::new("unknown_window", "不允许的窗口")),
     };
-    state
-        .motion_catalog
-        .read()
-        .write_feature_index(&request.cache_key, &request.payload)
-        .map_err(|error| CommandError::operation("motion_feature_cache_write_failed", error))
+    let app = window.app_handle().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<DesktopState>();
+        state
+            .motion_catalog
+            .read()
+            .write_feature_index(&request.cache_key, &request.payload)
+            .map_err(|error| CommandError::operation("motion_feature_cache_write_failed", error))
+    })
+    .await
+    .map_err(|error| CommandError::operation("motion_feature_cache_dispatch_failed", error))?
 }
 
 pub(super) fn profile_supports_pet_voice(profile: &AvatarAdaptationProfile) -> bool {

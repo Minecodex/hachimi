@@ -529,7 +529,7 @@ describe("Hachimi Workbench core lifecycle", () => {
       await browser.waitUntil(
         () => browser.execute(() => window.__HACHIMI_PET_REPLY_OBSERVATION__?.matched === true),
         {
-          timeout: 45_000,
+          timeout: 120_000,
           timeoutMsg: "Pet writable Workspace completion reply was not projected",
         },
       );

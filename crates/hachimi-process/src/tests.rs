@@ -68,14 +68,25 @@ fn spec(root: &Path, command: Vec<String>, tty: bool, output_limit: usize) -> Pr
 #[tokio::test]
 async fn pipe_output_is_byte_bounded_and_replayable() {
     let script = if cfg!(windows) {
-        "[Console]::Out.Write('abcde'); [Console]::Error.Write('12345')"
+        "<nul set /p =abcde & <nul set /p =12345 1>&2"
     } else {
         "printf abcde; printf 12345 1>&2"
+    };
+    let command = if cfg!(windows) {
+        vec![
+            "cmd.exe".into(),
+            "/d".into(),
+            "/q".into(),
+            "/c".into(),
+            script.into(),
+        ]
+    } else {
+        shell_script(script)
     };
     let root = tempfile::tempdir().unwrap();
     let registry = ProcessRegistry::default();
     let launched = registry
-        .spawn(spec(root.path(), shell_script(script), false, 3))
+        .spawn(spec(root.path(), command, false, 3))
         .await
         .unwrap();
     let snapshot = loop {
@@ -101,14 +112,26 @@ async fn pipe_output_is_byte_bounded_and_replayable() {
 #[tokio::test]
 async fn pty_supports_stdin_resize_and_idempotent_write() {
     let script = if cfg!(windows) {
-        "$line=[Console]::In.ReadLine(); [Console]::Out.Write(('echo:' + $line))"
+        "echo re^ady&set /p fixture_line=&echo echo:!fixture_line!"
     } else {
-        "IFS= read -r line; printf 'echo:%s' \"$line\""
+        "printf ready; IFS= read -r line; printf 'echo:%s' \"$line\""
+    };
+    let command = if cfg!(windows) {
+        vec![
+            "cmd.exe".into(),
+            "/d".into(),
+            "/q".into(),
+            "/v:on".into(),
+            "/c".into(),
+            script.into(),
+        ]
+    } else {
+        shell_script(script)
     };
     let root = tempfile::tempdir().unwrap();
     let registry = ProcessRegistry::default();
     let launched = registry
-        .spawn(spec(root.path(), shell_script(script), true, 4096))
+        .spawn(spec(root.path(), command, true, 4096))
         .await
         .unwrap();
     registry
@@ -122,6 +145,29 @@ async fn pty_supports_stdin_resize_and_idempotent_write() {
         )
         .await
         .unwrap();
+    let mut after = None;
+    let mut output = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let snapshot = registry
+                .read(&launched.id, after, None, Some(Duration::from_millis(100)))
+                .await
+                .unwrap();
+            for chunk in snapshot.chunks {
+                output.extend(STANDARD.decode(chunk.delta_base64).unwrap());
+            }
+            after = Some(snapshot.next_sequence);
+            if String::from_utf8_lossy(&output).contains("ready") {
+                break;
+            }
+            assert!(
+                !snapshot.closed,
+                "PTY fixture closed before its ready marker"
+            );
+        }
+    })
+    .await
+    .expect("PTY fixture ready marker");
     let newline = if cfg!(windows) {
         "hello\r\n"
     } else {
@@ -148,8 +194,6 @@ async fn pty_supports_stdin_resize_and_idempotent_write() {
         )
         .await
         .unwrap();
-    let mut after = None;
-    let mut output = Vec::new();
     loop {
         let snapshot = registry
             .read(&launched.id, after, None, Some(Duration::from_secs(2)))
