@@ -428,6 +428,19 @@ export class MotionAssetLibrary {
       this.sourceUse.set(id, ++this.useCounter);
       return existing;
     }
+    const entry = this.entries.get(id);
+    const parent = entry?.derivedFromMotionId
+      ? this.entries.get(entry.derivedFromMotionId)
+      : undefined;
+    if (entry && parent && entry.sha256 === parent.sha256) {
+      // Derived entries trim this same immutable VRMA at compile time. Reuse
+      // its parsed source rather than issuing a second native protocol fetch.
+      const shared = this.loadSource(parent.id);
+      this.sources.set(id, shared);
+      this.sourceUse.set(id, ++this.useCounter);
+      evictSources(this.sources, this.sourceUse, id);
+      return shared;
+    }
     const pending = this.resolveAsset(id)
       .then(async (asset) => {
         if (!asset) throw new Error(`Unknown motion asset: ${id}`);

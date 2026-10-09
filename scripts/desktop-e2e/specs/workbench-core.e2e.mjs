@@ -108,6 +108,18 @@ async function writeTerminal(command) {
   const terminal = await $(".terminal-session.active .xterm");
   await terminal.waitForDisplayed({ timeout: 20_000 });
   await terminal.click();
+  // The verified default shell can be CMD on a hosted standard-user profile.
+  // Enter PowerShell explicitly before sending the PowerShell-only fixture.
+  await browser.keys("powershell.exe -NoProfile");
+  await browser.keys("Enter");
+  await browser.waitUntil(
+    async () =>
+      (await $(".terminal-session.active .xterm-rows").getText()).includes("Windows PowerShell"),
+    {
+      timeout: 20_000,
+      timeoutMsg: "PowerShell fixture interpreter did not start",
+    },
+  );
   await browser.keys(command);
   await browser.keys("Enter");
 }
@@ -177,8 +189,6 @@ describe("Hachimi Workbench core lifecycle", () => {
 
     writeFileSync(systemGitGate, "normal\n", "utf8");
     await clickWhenReady('[data-testid="system-git-refresh"]');
-    await $('[data-testid="project-git-create-initial"]').waitForEnabled({ timeout: 20_000 });
-
     await clickWhenReady('[data-testid="project-git-create-initial"]');
     const identity = await $$(".project-git-initial-fields input");
     await identity[0].setValue("Hachimi Desktop E2E");

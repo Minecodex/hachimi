@@ -57,3 +57,5 @@ Hosted CI 的视觉任务使用一个 Playwright worker，避免多个真实 VRM
 真实 Worker 进程和 mock provider 驱动的集成测试也复用 TempDir 所有者 helper，确保 Hosted 管理员 runner 满足工作区的个体用户所有权前提。集成测试仍验证真实文件变更、审批、审计与重启持久化；仅修改刚创建的测试目录。
 
 终端生命周期检查完成后再启动待重启的审批 Run，避免无关交互消耗既有工具时限。动作 E2E 在同一页面采样中确认 ambient 动作标识与 action slot，再校验回到 waiting；Skill 菜单通过已有键盘激活路径操作。动作特征缓存 IPC 使用两秒预算，超时按现有缓存失败路径从不可变 VRMA 重建；真实动作分析和切换准入阈值继续执行。
+
+终端 fixture 显式进入系统 PowerShell，再发送 PowerShell 语法，兼容运行时选择 CMD 的标准用户环境。Git 首次提交继续经过实际界面按钮的 DOM 禁用状态校验。内容 SHA-256 相同的派生动作复用父 VRMA 的解析结果，编译时仍应用派生时间范围，并维持现有 LRU 容量限制；真实 VRM/VRMA 集成测试校验一次源读取及派生首尾姿态。

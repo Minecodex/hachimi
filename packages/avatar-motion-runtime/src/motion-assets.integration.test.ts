@@ -93,13 +93,20 @@ describe("bundled VRMA runtime integration", () => {
 
     const derived = catalog.entries.find((entry) => entry.motionRole === "action_recover_to_idle")!;
     const source = entries.get(derived.derivedFromMotionId!)!;
-    await library.prepare(vrm!, source.id);
-    await library.prepare(vrm!, derived.id);
-    const derivedStart = library.sample(vrm!, derived.id, 0)!;
-    const sourceStart = library.sample(vrm!, source.id, derived.sourceStartMs ?? 0)!;
+    let sourceReads = 0;
+    const derivedLibrary = new MotionAssetLibrary(motionLoader, async (id) => {
+      sourceReads += 1;
+      return resolveAsset(id);
+    });
+    derivedLibrary.setCatalog(catalog.entries);
+    await derivedLibrary.prepare(vrm!, source.id);
+    await derivedLibrary.prepare(vrm!, derived.id);
+    expect(sourceReads).toBe(1);
+    const derivedStart = derivedLibrary.sample(vrm!, derived.id, 0)!;
+    const sourceStart = derivedLibrary.sample(vrm!, source.id, derived.sourceStartMs ?? 0)!;
     expect(maxPoseAngle(derivedStart, sourceStart)).toBeLessThan(1e-6);
-    const derivedEnd = library.sample(vrm!, derived.id, derived.durationMs - 0.001)!;
-    const sourceEnd = library.sample(
+    const derivedEnd = derivedLibrary.sample(vrm!, derived.id, derived.durationMs - 0.001)!;
+    const sourceEnd = derivedLibrary.sample(
       vrm!,
       source.id,
       (derived.sourceEndMs ?? source.durationMs) - 0.001,
