@@ -9,6 +9,7 @@ import { switchToPet, switchToWorkbench } from "../support/windows.mjs";
 import {
   beginAmbientObservation,
   readAmbientObservation,
+  readAmbientRecovery,
   endAmbientObservation,
 } from "../support/motion-observation.mjs";
 
@@ -101,22 +102,24 @@ describe("Avatar Motion Runtime V5", () => {
     );
 
     await browser.execute(beginAmbientObservation);
-    let ambientMotionId;
     try {
-      ambientMotionId = await browser.waitUntil(() => browser.execute(readAmbientObservation), {
-        timeout: 60_000,
-        timeoutMsg: "One-shot ambient motion did not enter its action slot",
+      const ambientMotionId = await browser.waitUntil(
+        () => browser.execute(readAmbientObservation),
+        {
+          timeout: 60_000,
+          timeoutMsg: "One-shot ambient motion did not enter its action slot",
+        },
+      );
+      const ambientMotion = motionCatalog.entries.find((entry) => entry.id === ambientMotionId);
+      expect(ambientMotion).toBeDefined();
+      expect(ambientMotion.loopMode).toBe("once");
+      await browser.waitUntil(() => browser.execute(readAmbientRecovery), {
+        timeout: 20_000,
+        timeoutMsg: "Ambient action did not recover to waiting base idle",
       });
     } finally {
       await browser.execute(endAmbientObservation);
     }
-    const ambientMotion = motionCatalog.entries.find((entry) => entry.id === ambientMotionId);
-    expect(ambientMotion).toBeDefined();
-    expect(ambientMotion.loopMode).toBe("once");
-    await browser.waitUntil(
-      async () => (await $(".pet-avatar-canvas").getAttribute("data-motion-slots")) === "base",
-      { timeout: 20_000, timeoutMsg: "Ambient action did not recover to waiting base idle" },
-    );
   });
 
   it("keeps transition diagnostics and direct Pet interaction live across windows", async () => {

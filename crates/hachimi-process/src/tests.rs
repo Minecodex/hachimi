@@ -194,8 +194,9 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
         after: &mut Option<u64>,
         output: &mut Vec<u8>,
         needle: &str,
+        budget: Duration,
     ) -> Result<(), String> {
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(budget, async {
             loop {
                 let snapshot = registry
                     .read(process_id, *after, None, Some(Duration::from_millis(500)))
@@ -300,13 +301,26 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
     let mut launch = spec(root.path(), launch_command, true, 64 * 1024);
     launch.cwd = root.path().canonicalize().expect("canonical terminal root");
     launch.environment = std::env::vars().collect();
-    launch.timeout = Some(Duration::from_secs(30));
+    launch.timeout = Some(Duration::from_secs(60));
     let launched = registry.spawn(launch).await.expect("direct terminal");
     let process_id = launched.id.clone();
     let mut after = None;
     let mut output = Vec::new();
 
     let result = async {
+        if cfg!(windows) {
+            // PowerShell initializes PSReadLine before its first prompt. Input
+            // sent during that startup can be discarded instead of executed.
+            read_until(
+                &registry,
+                &process_id,
+                &mut after,
+                &mut output,
+                "PS ",
+                Duration::from_secs(30),
+            )
+            .await?;
+        }
         write(&registry, &process_id, "cwd", cwd_probe).await?;
         read_until(
             &registry,
@@ -314,6 +328,7 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
             &mut after,
             &mut output,
             "cwd:expected-cwd",
+            Duration::from_secs(10),
         )
         .await?;
 
@@ -324,6 +339,7 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
             &mut after,
             &mut output,
             foreground_needle,
+            Duration::from_secs(10),
         )
         .await?;
         write(&registry, &process_id, "interrupt", b"\x03").await?;
@@ -335,6 +351,7 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
             &mut after,
             &mut output,
             "interrupt-ok",
+            Duration::from_secs(10),
         )
         .await?;
         write(&registry, &process_id, "exit", exit_command).await?;

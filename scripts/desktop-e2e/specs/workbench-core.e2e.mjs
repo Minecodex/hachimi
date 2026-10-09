@@ -10,7 +10,7 @@ import {
 } from "../support/interactions.mjs";
 import { restartApplication, switchToPet, switchToWorkbench } from "../support/windows.mjs";
 
-/* global HTMLButtonElement, HTMLTextAreaElement, InputEvent, document */
+/* global HTMLButtonElement, HTMLTextAreaElement, InputEvent, MutationObserver, document */
 
 function git(project, ...args) {
   const result = spawnSync("git", args, { cwd: project, encoding: "utf8" });
@@ -487,8 +487,19 @@ describe("Hachimi Workbench core lifecycle", () => {
       await clickWhenReady('[data-testid="pet-permission-writable"]');
       await clickWhenReady('[data-testid="pet-permission-save"]');
       await browser.waitUntil(
-        async () => !(await $('[data-testid="pet-permission-save"]').isEnabled()),
-        { timeout: 10_000, timeoutMsg: "Pet permission editor did not save" },
+        () =>
+          browser.execute(() => {
+            const button = document.querySelector('[data-testid="pet-permission-save"]');
+            return (
+              button instanceof HTMLButtonElement &&
+              button.disabled &&
+              button.getAttribute("aria-busy") !== "true" &&
+              /Pet Agent 权限已保存|Pet Agent permissions saved/.test(
+                document.body.textContent ?? "",
+              )
+            );
+          }),
+        { timeout: 20_000, timeoutMsg: "Pet permission editor did not save" },
       );
     }
     await switchToPet();
@@ -497,15 +508,37 @@ describe("Hachimi Workbench core lifecycle", () => {
     await $('[data-testid="pet-composer-input"]').setValue(
       "[desktop-e2e:pet-cross-window] verify shared interaction ownership",
     );
+    await browser.execute(() => {
+      const observation = { matched: false, observer: null };
+      const capture = () => {
+        if (document.querySelector(".pet-speech")?.textContent?.includes("writable Workspace")) {
+          observation.matched = true;
+          observation.observer?.disconnect();
+        }
+      };
+      observation.observer = new MutationObserver(capture);
+      observation.observer.observe(document.body, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+      window.__HACHIMI_PET_REPLY_OBSERVATION__ = observation;
+    });
     await clickWhenReady('[data-testid="pet-composer-submit"]');
-    await browser.waitUntil(
-      async () => {
-        return (
-          await browser.execute(() => document.querySelector(".pet-speech")?.textContent ?? "")
-        ).includes("writable Workspace");
-      },
-      { timeout: 45_000, timeoutMsg: "Pet writable Workspace completion reply was not projected" },
-    );
+    try {
+      await browser.waitUntil(
+        () => browser.execute(() => window.__HACHIMI_PET_REPLY_OBSERVATION__?.matched === true),
+        {
+          timeout: 45_000,
+          timeoutMsg: "Pet writable Workspace completion reply was not projected",
+        },
+      );
+    } finally {
+      await browser.execute(() => {
+        window.__HACHIMI_PET_REPLY_OBSERVATION__?.observer?.disconnect();
+        delete window.__HACHIMI_PET_REPLY_OBSERVATION__;
+      });
+    }
     await expect($('[data-testid="pet-approve-once"]')).not.toBeDisplayed();
     await expect($('[data-testid="pet-attention"]')).not.toBeDisplayed();
     expect(petEvidenceExists(project)).toBe(true);

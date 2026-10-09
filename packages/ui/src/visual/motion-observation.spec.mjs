@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   beginAmbientObservation,
   readAmbientObservation,
+  readAmbientRecovery,
   endAmbientObservation,
 } from "../../../../scripts/desktop-e2e/support/motion-observation.mjs";
 
@@ -17,9 +18,13 @@ test("records a rendered ambient action that ends between driver polls", async (
     canvas.setAttribute("data-motion-slots", "base,action");
     await new Promise((resolve) => requestAnimationFrame(resolve));
     canvas.setAttribute("data-motion-slots", "base");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    canvas.setAttribute("data-motion-ambient", "fixture.ambient.next");
+    canvas.setAttribute("data-motion-slots", "base,action");
   });
-  await expect(page.locator("canvas")).toHaveAttribute("data-motion-slots", "base");
+  await expect(page.locator("canvas")).toHaveAttribute("data-motion-slots", "base,action");
   expect(await page.evaluate(readAmbientObservation)).toBe("fixture.ambient.once");
+  expect(await page.evaluate(readAmbientRecovery)).toBe(true);
   await page.evaluate(endAmbientObservation);
   expect(await page.evaluate(readAmbientObservation)).toBe(false);
 });
