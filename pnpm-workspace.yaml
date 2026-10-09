@@ -8,3 +8,6 @@ allowBuilds:
   esbuild: true
   geckodriver: false
   unrs-resolver: true
+
+patchedDependencies:
+  "@kobalte/utils@0.9.2": patches/@kobalte__utils@0.9.2.patch

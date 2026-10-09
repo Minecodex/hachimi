@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@kobalte/utils@0.9.2': 33962bc928adb9a42ad16f75cd0444d22e81efb1154ee9d640026d943f2e7b9c
+
 importers:
 
   .:
@@ -6492,14 +6495,14 @@ snapshots:
     dependencies:
       '@floating-ui/dom': 1.8.0
       '@internationalized/number': 3.6.7
-      '@kobalte/utils': 0.9.2(solid-js@1.9.14)
+      '@kobalte/utils': 0.9.2(patch_hash=33962bc928adb9a42ad16f75cd0444d22e81efb1154ee9d640026d943f2e7b9c)(solid-js@1.9.14)
       '@solid-primitives/props': 3.2.4(solid-js@1.9.14)
       '@solid-primitives/resize-observer': 2.2.0(solid-js@1.9.14)
       solid-js: 1.9.14
       solid-presence: 0.1.8(solid-js@1.9.14)
       solid-prevent-scroll: 0.1.10(solid-js@1.9.14)
 
-  '@kobalte/utils@0.9.2(solid-js@1.9.14)':
+  '@kobalte/utils@0.9.2(patch_hash=33962bc928adb9a42ad16f75cd0444d22e81efb1154ee9d640026d943f2e7b9c)(solid-js@1.9.14)':
     dependencies:
       '@solid-primitives/event-listener': 2.4.6(solid-js@1.9.14)
       '@solid-primitives/keyed': 1.5.3(solid-js@1.9.14)

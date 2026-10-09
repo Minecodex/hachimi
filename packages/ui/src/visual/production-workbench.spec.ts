@@ -1,7 +1,11 @@
 import { runAxeWhenAvailable } from "./accessibility";
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import type { MotionImportCommitRequest } from "../../../contracts/src/generated";
+import type {
+  MotionImportCommitRequest,
+  SkillRecord,
+  SkillTreeNode,
+} from "../../../contracts/src/generated";
 import { resolve } from "node:path";
 import {
   appearance,
@@ -1360,6 +1364,74 @@ test("production UserInput questions replace the composer with direct choices", 
   ).toBe(true);
   await expect(page).toHaveScreenshot("production-user-input-gate-720x640.png");
 });
+
+for (const input of ["pointer", "keyboard"] as const) {
+  test(`production Skill actions remain responsive with ${input} input`, async ({ page }) => {
+    await installTauriMocks(page);
+    const skill: SkillRecord = {
+      id: "ci-user-skill",
+      scope: "user",
+      namespace: null,
+      name: "ci-user-skill",
+      qualifiedName: "ci-user-skill",
+      description: "CI fixture",
+      dependencies: [],
+      editable: true,
+      enabled: true,
+      contentHash: "fixture-hash",
+      treeRevision: "fixture-revision",
+      diagnostics: [],
+      updatedAtMs: 1,
+    };
+    const tree: SkillTreeNode = {
+      name: skill.name,
+      relativePath: "",
+      kind: "directory",
+      editorKind: "unsupported",
+      sizeBytes: 0,
+      revision: skill.treeRevision,
+      children: [],
+    };
+    await page.addInitScript(
+      ({ skill, tree }) => {
+        const host = window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (name: string, args?: unknown) => Promise<unknown> };
+        };
+        const original = host.__TAURI_INTERNALS__.invoke;
+        let created = false;
+        host.__TAURI_INTERNALS__.invoke = async (name, args) => {
+          if (name === "list_skills") return created ? [skill] : [];
+          if (name === "create_skill") {
+            created = true;
+            return skill;
+          }
+          if (name === "get_skill_tree") return tree;
+          return original(name, args);
+        };
+      },
+      { skill, tree },
+    );
+    await page.goto("http://127.0.0.1:1420/workbench.html?route=settings/skills");
+    await page.getByTestId("skill-create").click();
+    await page.getByPlaceholder(/release-notes/).fill(skill.name);
+    await page.locator('[role="dialog"] .dialog-actions button').last().click();
+    await page.getByTestId(`skill-row-${skill.name}`).hover();
+    const trigger = page.getByTestId(`skill-actions-${skill.name}`);
+    if (input === "keyboard") {
+      await trigger.focus();
+      await trigger.press("Enter");
+    } else {
+      await trigger.click();
+    }
+    const action = page.getByTestId(`skill-action-new-file-${skill.name}`);
+    await expect(action).toBeVisible();
+    await action.click();
+    await page.getByTestId("skill-entry-name").fill("reference.md");
+    await page.getByRole("button", { name: "取消", exact: true }).last().click();
+    await page.getByTestId("settings-nav-mcp").click();
+    await expect(page.getByTestId("mcp-settings-page")).toBeVisible();
+  });
+}
 
 for (const route of ["general", "llm", "voice", "avatar", "skills", "mcp"] as const) {
   test(`production settings ${route} uses the shared page contract`, async ({ page }) => {
