@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { MotionCatalogEntry, MotionTransitionProfile } from "@hachimi/contracts";
 import { VRMLoaderPlugin, type VRM } from "@pixiv/three-vrm";
 import { VRMAnimationLoaderPlugin } from "@pixiv/three-vrm-animation";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MotionAssetLibrary } from "./motion-asset-library";
 import type { SampledMotionPose } from "./motion-asset-library";
@@ -22,6 +22,36 @@ Object.defineProperty(globalThis, "createImageBitmap", {
 });
 
 describe("bundled VRMA runtime integration", () => {
+  it("retries a failed source shared by a parent and its derived motion", async () => {
+    const catalog = JSON.parse(
+      await readFile(`${repositoryRoot}/assets/avatar-motions-v5/catalog.json`, "utf8"),
+    ) as BuiltinCatalog;
+    const derived = catalog.entries.find((entry) => entry.motionRole === "action_recover_to_idle")!;
+    const source = catalog.entries.find((entry) => entry.id === derived.derivedFromMotionId)!;
+    const bytes = await readFile(
+      `${repositoryRoot}/assets/avatar-motions-v5/builtin/${source.fileName}`,
+    );
+    const motionLoader = new GLTFLoader();
+    motionLoader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+    const library = new MotionAssetLibrary(motionLoader, async (id) => ({
+      entry: catalog.entries.find((entry) => entry.id === id)!,
+      assetUrl: `data:model/gltf-binary;base64,${bytes.toString("base64")}`,
+    }));
+    library.setCatalog(catalog.entries);
+    const request = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("source unavailable"));
+    try {
+      await expect(library.preload([source.id, derived.id])).rejects.toThrow("source unavailable");
+      expect(library.sourceCount()).toBe(0);
+      await expect(library.preload([source.id, derived.id])).resolves.toBeUndefined();
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(library.sourceCount()).toBe(2);
+    } finally {
+      request.mockRestore();
+    }
+  });
+
   it("retargets and samples every built-in motion on the default VRM", async () => {
     const catalog = JSON.parse(
       await readFile(`${repositoryRoot}/assets/avatar-motions-v5/catalog.json`, "utf8"),

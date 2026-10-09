@@ -455,8 +455,12 @@ export class MotionAssetLibrary {
         return animations[0]!;
       })
       .catch((error: unknown) => {
-        this.sources.delete(id);
-        this.sourceUse.delete(id);
+        // Remove every alias of this failed load so derived motions can retry too.
+        for (const [motionId, source] of this.sources) {
+          if (source !== pending) continue;
+          this.sources.delete(motionId);
+          this.sourceUse.delete(motionId);
+        }
         throw error;
       });
     this.sources.set(id, pending);
