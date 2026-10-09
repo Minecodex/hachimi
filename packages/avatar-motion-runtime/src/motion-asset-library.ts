@@ -3,6 +3,7 @@ import type {
   MotionRuntimeAsset,
   MotionTransitionProfile,
 } from "@hachimi/contracts";
+import { withMotionFeatureCacheBudget } from "./motion-feature-cache-budget";
 import type { VRM, VRMHumanBoneName } from "@pixiv/three-vrm";
 import { createVRMAnimationClip, type VRMAnimation } from "@pixiv/three-vrm-animation";
 import {
@@ -334,7 +335,7 @@ export class MotionAssetLibrary {
     const cacheKey = `${skeletonSignature}:${motion.entry.sha256}:v${MOTION_FEATURE_VERSION}`;
     if (this.featureCache) {
       try {
-        const payload = await this.featureCache.read(cacheKey);
+        const payload = await withMotionFeatureCacheBudget(this.featureCache.read(cacheKey));
         const restored = payload ? deserializeMotionFeatureIndex(payload, cacheKey, id) : undefined;
         if (restored) {
           this.storeFeatureIndex(vrm, id, restored);
@@ -348,7 +349,9 @@ export class MotionAssetLibrary {
     if (!built) throw new Error(`Motion ${id} feature analysis failed`);
     if (this.featureCache) {
       try {
-        await this.featureCache.write(cacheKey, serializeMotionFeatureIndex(built));
+        await withMotionFeatureCacheBudget(
+          this.featureCache.write(cacheKey, serializeMotionFeatureIndex(built)),
+        );
       } catch {
         // Persistence is an optimization; the analyzed in-memory index remains authoritative.
       }

@@ -1,3 +1,4 @@
+import { runAxeWhenAvailable } from "./accessibility";
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
@@ -24,13 +25,19 @@ test("button and text field expose keyboard focus", async ({ page }) => {
   await page.locator("body").click({ position: { x: 1, y: 1 } });
   await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: "Button" })).toBeFocused();
-  expect((await new AxeBuilder({ page }).withTags(wcagTags).analyze()).violations).toEqual([]);
+  expect(
+    (await runAxeWhenAvailable(() => new AxeBuilder({ page }).withTags(wcagTags).analyze()))
+      .violations,
+  ).toEqual([]);
 
   await page.goto("/iframe.html?id=components-forms--text-input");
   await page.locator("body").click({ position: { x: 1, y: 1 } });
   await page.keyboard.press("Tab");
   await expect(page.getByRole("textbox", { name: "API Base URL" })).toBeFocused();
-  expect((await new AxeBuilder({ page }).withTags(wcagTags).analyze()).violations).toEqual([]);
+  expect(
+    (await runAxeWhenAvailable(() => new AxeBuilder({ page }).withTags(wcagTags).analyze()))
+      .violations,
+  ).toEqual([]);
 });
 
 test("context menu exposes the enabled Workbench item", async ({ page }) => {
@@ -44,10 +51,12 @@ test("context menu exposes the enabled Workbench item", async ({ page }) => {
   expect(await menu.evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
   expect(
     (
-      await new AxeBuilder({ page })
-        .withTags(wcagTags)
-        .disableRules(["aria-required-children"])
-        .analyze()
+      await runAxeWhenAvailable(() =>
+        new AxeBuilder({ page })
+          .withTags(wcagTags)
+          .disableRules(["aria-required-children"])
+          .analyze(),
+      )
     ).violations,
   ).toEqual([]);
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
@@ -70,7 +79,10 @@ test("dialog supports focus and Escape", async ({ page }) => {
   expect(closeBox).not.toBeNull();
   expect(closeBox!.x).toBeGreaterThan(dialogBox!.x + dialogBox!.width - 64);
   expect(closeBox!.y).toBeLessThan(dialogBox!.y + 64);
-  expect((await new AxeBuilder({ page }).withTags(wcagTags).analyze()).violations).toEqual([]);
+  expect(
+    (await runAxeWhenAvailable(() => new AxeBuilder({ page }).withTags(wcagTags).analyze()))
+      .violations,
+  ).toEqual([]);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 });

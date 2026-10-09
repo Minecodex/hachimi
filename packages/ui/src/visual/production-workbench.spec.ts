@@ -1,3 +1,4 @@
+import { runAxeWhenAvailable } from "./accessibility";
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import type { MotionImportCommitRequest } from "../../../contracts/src/generated";
@@ -969,16 +970,20 @@ test("production task center uses cards and focused dialogs", async ({ page }) =
   await expect(page.getByTestId("workbench-task-center")).toBeVisible();
   await expect(page.locator(".workbench-toolbar")).toHaveCount(0);
   await expect(page.getByTestId("task-schedule-card")).toHaveCount(2);
-  expect((await new AxeBuilder({ page }).include(".task-center").analyze()).violations).toEqual([]);
+  expect(
+    (await runAxeWhenAvailable(() => new AxeBuilder({ page }).include(".task-center").analyze()))
+      .violations,
+  ).toEqual([]);
   await expect(page).toHaveScreenshot("production-task-center-cards-1280x800.png", {
     animations: "disabled",
   });
   await page.getByTestId("task-create-toggle").click();
   await expect(page.getByTestId("task-name")).toBeVisible();
   await expect(page.getByTestId("task-run-at")).toHaveValue("2026-07-27T00:00");
-  expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual(
-    [],
-  );
+  expect(
+    (await runAxeWhenAvailable(() => new AxeBuilder({ page }).include('[role="dialog"]').analyze()))
+      .violations,
+  ).toEqual([]);
   await expect(page).toHaveScreenshot("production-task-center-1280x800.png", {
     animations: "disabled",
     // Windows owns the native date field's text format. Its ISO value is asserted above.
@@ -1363,11 +1368,13 @@ for (const route of ["general", "llm", "voice", "avatar", "skills", "mcp"] as co
     await page.goto(`http://127.0.0.1:1420/workbench.html?route=settings/${route}`);
     await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
     await expect(page.locator("html")).toHaveJSProperty("scrollWidth", 1280);
-    const result = await new AxeBuilder({ page })
-      .include(".settings-main")
-      .withTags(["wcag2a", "wcag2aa"])
-      .disableRules(["nested-interactive"])
-      .analyze();
+    const result = await runAxeWhenAvailable(() =>
+      new AxeBuilder({ page })
+        .include(".settings-main")
+        .withTags(["wcag2a", "wcag2aa"])
+        .disableRules(["nested-interactive"])
+        .analyze(),
+    );
     expect(result.violations).toEqual([]);
     if (route === "avatar") await expect(page.getByText("预览不可用")).toBeVisible();
     await expect(page).toHaveScreenshot(`production-settings-${route}-1280x800.png`, {
@@ -1863,10 +1870,12 @@ test("production home and appearance have no new WCAG A or AA violations", async
   for (const route of ["home", "settings/appearance"]) {
     await page.goto(`http://127.0.0.1:1420/workbench.html?route=${route}`);
     await expect(page.getByText("Hachimi", { exact: true }).first()).toBeVisible();
-    const result = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-      .disableRules(["aria-hidden-focus", "nested-interactive"])
-      .analyze();
+    const result = await runAxeWhenAvailable(() =>
+      new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+        .disableRules(["aria-hidden-focus", "nested-interactive"])
+        .analyze(),
+    );
     expect(result.violations).toEqual([]);
   }
 });

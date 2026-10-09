@@ -367,8 +367,6 @@ describe("Hachimi Workbench core lifecycle", () => {
     await draft.setValue(
       `[desktop-e2e:approval-recovery] url=${browserUrl} start the deterministic external action and stop at approval.`,
     );
-    await clickWhenReady('[data-testid="workbench-start-task"]');
-    await $('[data-testid="workbench-approve-once"]').waitForDisplayed({ timeout: 30_000 });
 
     await openInspectorToolLauncher();
     await clickWhenReady(
@@ -429,6 +427,20 @@ describe("Hachimi Workbench core lifecycle", () => {
     );
     await clickWhenReady('[aria-label="关闭终端"], [aria-label="Close terminal"]');
 
+    // Start the waiting approval immediately before restart. The independent
+    // terminal lifecycle checks must not consume this tool's execution budget.
+    if (await isDisplayed(".workbench-inspector")) {
+      await clickWhenReady('[data-testid="workbench-toggle-inspector"]');
+    }
+    await expandFirstProject();
+    await clickWhenReady('[data-testid^="project-new-task-"]');
+    await clickWhenReady('[data-testid="workbench-permission-profile"]');
+    await clickWhenReady('[data-testid="workbench-permission-writable"]');
+    await $('[data-testid="workbench-composer-input"]').setValue(
+      `[desktop-e2e:approval-recovery] url=${browserUrl} stop at the approval boundary.`,
+    );
+    await clickWhenReady('[data-testid="workbench-start-task"]');
+    await waitForDisplayed('[data-testid="workbench-approve-once"]', 30_000);
     await restartApplication();
     await switchToWorkbench();
     await openProjectSessions();

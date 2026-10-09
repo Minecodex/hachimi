@@ -2,6 +2,8 @@ import { expect } from "@wdio/globals";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
+/* global document */
+
 import { clickWhenReady, waitForDisplayed } from "../support/interactions.mjs";
 import { switchToPet, switchToWorkbench } from "../support/windows.mjs";
 
@@ -93,21 +95,18 @@ describe("Avatar Motion Runtime V5", () => {
       { timeout: 15_000, timeoutMsg: "Completed action did not return to waiting base idle" },
     );
 
-    await browser.waitUntil(
-      async () => Boolean(await $(".pet-avatar-canvas").getAttribute("data-motion-ambient")),
-      { timeout: 30_000, timeoutMsg: "One-shot ambient motion did not start within 25 seconds" },
+    const ambientMotionId = await browser.waitUntil(
+      async () =>
+        browser.execute(() => {
+          const canvas = document.querySelector(".pet-avatar-canvas");
+          const id = canvas?.getAttribute("data-motion-ambient");
+          return id && canvas?.getAttribute("data-motion-slots")?.includes("action") ? id : false;
+        }),
+      { timeout: 30_000, timeoutMsg: "One-shot ambient motion did not enter its action slot" },
     );
-    const ambientMotionId = await $(".pet-avatar-canvas").getAttribute("data-motion-ambient");
     const ambientMotion = motionCatalog.entries.find((entry) => entry.id === ambientMotionId);
     expect(ambientMotion).toBeDefined();
     expect(ambientMotion.loopMode).toBe("once");
-    await browser.waitUntil(
-      async () =>
-        ((await $(".pet-avatar-canvas").getAttribute("data-motion-slots")) ?? "").includes(
-          "action",
-        ),
-      { timeout: 5_000, timeoutMsg: "Ambient motion did not enter the action slot" },
-    );
     await browser.waitUntil(
       async () => (await $(".pet-avatar-canvas").getAttribute("data-motion-slots")) === "base",
       { timeout: 20_000, timeoutMsg: "Ambient action did not recover to waiting base idle" },

@@ -51,3 +51,9 @@ Git 能力探测在新建临时目录中使用等价的 Windows 路径表示，�
 WebView2 附加与重启显式使用 [WebDriver Classic](https://webdriver.io/docs/capabilities/#wdioenforcewebdriverclassic)，避免 WebdriverIO 自动切换 BiDi 后出现失效会话和悬挂的 `script.callFunction`；全部窗口切换、重启和原有功能断言仍执行。
 
 工作区 Rust 测试将新建 TempDir 的目录树所有者设为当前用户，覆盖 Git fixture 元数据；该入口仅在测试模块可用。完整桌面 E2E 同样加载 Avatar V5 的用户动作 fixture。Run 审阅前先关闭覆盖时间线的宽文件面板，Motion Lab 等待实际切换诊断完成后再运行矩阵。失败时保存当前 HTML 与隔离测试会话快照，帮助区分选择器、投影和实际工具执行失败。
+
+Hosted CI 的视觉任务使用一个 Playwright worker，避免多个真实 VRM 软件渲染场景争用资源。显式 Axe 审计只在引擎报告“already running”时等待 Storybook 的在途审计结束；实际违规结果和其他异常仍立即交给原断言处理。Storybook 的 `a11y.test: error`、WCAG 标签、截图基线与比较阈值保持生效。
+
+真实 Worker 进程和 mock provider 驱动的集成测试也复用 TempDir 所有者 helper，确保 Hosted 管理员 runner 满足工作区的个体用户所有权前提。集成测试仍验证真实文件变更、审批、审计与重启持久化；仅修改刚创建的测试目录。
+
+终端生命周期检查完成后再启动待重启的审批 Run，避免无关交互消耗既有工具时限。动作 E2E 在同一页面采样中确认 ambient 动作标识与 action slot，再校验回到 waiting；Skill 菜单通过已有键盘激活路径操作。动作特征缓存 IPC 使用两秒预算，超时按现有缓存失败路径从不可变 VRMA 重建；真实动作分析和切换准入阈值继续执行。

@@ -2,6 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./src/visual",
+  ...(process.env.CI ? { workers: 1 } : {}),
   snapshotPathTemplate: "{testDir}/__screenshots__/{arg}{ext}",
   use: {
     locale: "en-US",

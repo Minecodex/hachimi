@@ -37,7 +37,8 @@ async function openSkillActions(skillName) {
       ),
     { timeout: 20_000, timeoutMsg: `Skill actions did not become visible: ${skillName}` },
   );
-  await clickWhenReady(triggerSelector);
+  // Activate the focused menu trigger through its supported keyboard path.
+  await browser.keys("Enter");
 }
 
 async function selectMenuAction(selector) {
