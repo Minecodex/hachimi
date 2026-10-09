@@ -93,6 +93,24 @@ export const config = {
         });
         if (snapshot) {
           writeFileSync(resolve(artifacts, `${safeName}.json`), JSON.stringify(snapshot, null, 2));
+          const childSessionIds = [
+            ...new Set((snapshot.agentTasks ?? []).map((task) => task.childSessionId)),
+          ];
+          for (const [index, sessionId] of childSessionIds.entries()) {
+            try {
+              const child = await browser.executeAsync((id, done) => {
+                window.__TAURI_INTERNALS__
+                  .invoke("get_workbench_session", { sessionId: id })
+                  .then(done, (error) => done({ diagnosticError: String(error) }));
+              }, sessionId);
+              writeFileSync(
+                resolve(artifacts, `${safeName}-child-${index}.json`),
+                JSON.stringify(child, null, 2),
+              );
+            } catch {
+              /* Retain the original failure and parent snapshot. */
+            }
+          }
         }
       } catch {
         // Preserve the original failure when a restart already invalidated the

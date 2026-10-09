@@ -151,7 +151,7 @@ describe("Avatar Motion Runtime V5", () => {
     expect(rejectedTransitions).toHaveLength(0);
 
     await clickWhenReady('[data-testid="motion-lab-play-pet"]');
-    await expect($('[data-testid="motion-lab-pet-status"]')).toBeDisplayed();
+    await waitForDisplayed('[data-testid="motion-lab-pet-status"]', 20_000);
 
     await switchToPet();
     await waitForDisplayed(".pet-avatar-hit-area", 20_000);

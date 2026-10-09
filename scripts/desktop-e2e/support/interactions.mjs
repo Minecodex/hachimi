@@ -15,7 +15,7 @@ async function readyPoint(selector, timeout, requireEnabled, description) {
               ).singleNodeValue
             : document.querySelector(targetSelector);
           if (!(target instanceof HTMLElement)) return false;
-          target.scrollIntoView({ block: "center", inline: "nearest" });
+          target.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
           const style = getComputedStyle(target);
           const bounds = target.getBoundingClientRect();
           const disabled =
@@ -32,10 +32,11 @@ async function readyPoint(selector, timeout, requireEnabled, description) {
           ) {
             return false;
           }
-          return {
-            x: Math.round(bounds.left + bounds.width / 2),
-            y: Math.round(bounds.top + bounds.height / 2),
-          };
+          const x = Math.round(bounds.left + bounds.width / 2);
+          const y = Math.round(bounds.top + bounds.height / 2);
+          const hit = document.elementFromPoint(x, y);
+          if (mustBeEnabled && hit !== target && !target.contains(hit)) return false;
+          return { x, y };
         },
         selector,
         requireEnabled,

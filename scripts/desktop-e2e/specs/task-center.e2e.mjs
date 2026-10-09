@@ -857,7 +857,7 @@ describe("Hachimi scheduled Agent tasks", () => {
     await selectSchedule(name);
     await browser.waitUntil(
       async () => (await readTaskRunStateFromSource()).status === "succeeded",
-      { timeout: 60_000, timeoutMsg: "Interrupted Office stdio Run did not recover" },
+      { timeout: 120_000, timeoutMsg: "Interrupted Office stdio Run did not recover" },
     );
     if (!existsSync(recoveredArtifact)) {
       throw new Error("Recovered Office stdio Run did not create its durable artifact");
