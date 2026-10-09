@@ -52,6 +52,51 @@ describe("bundled VRMA runtime integration", () => {
     }
   });
 
+  it("releases a stalled native asset lookup and can retry the real source", async () => {
+    const catalog = JSON.parse(
+      await readFile(`${repositoryRoot}/assets/avatar-motions-v5/catalog.json`, "utf8"),
+    ) as BuiltinCatalog;
+    const derived = catalog.entries.find((entry) => entry.motionRole === "action_recover_to_idle")!;
+    const source = catalog.entries.find((entry) => entry.id === derived.derivedFromMotionId)!;
+    const bytes = await readFile(
+      `${repositoryRoot}/assets/avatar-motions-v5/builtin/${source.fileName}`,
+    );
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+    let requests = 0;
+    const stages: string[] = [];
+    const library = new MotionAssetLibrary(
+      loader,
+      async () => {
+        requests += 1;
+        if (requests === 1) return new Promise<never>(() => {});
+        return {
+          entry: source,
+          assetUrl: `data:model/gltf-binary;base64,${bytes.toString("base64")}`,
+        };
+      },
+      undefined,
+      (id, stage) => stages.push(`${id}: ${stage}`),
+    );
+    library.setCatalog(catalog.entries);
+    vi.useFakeTimers();
+    try {
+      const load = library.preload([source.id, derived.id]);
+      const rejected = expect(load).rejects.toThrow(`${source.id} resolve did not respond`);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await rejected;
+      expect(library.sourceCount()).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+    await expect(library.preload([source.id, derived.id])).resolves.toBeUndefined();
+    expect(requests).toBe(2);
+    expect(stages).toContain(`${source.id}: fetch`);
+    expect(stages).toContain(`${source.id}: parse`);
+    expect(stages.at(-1)).toBe(`${source.id}: ready`);
+  });
+
   it("retargets and samples every built-in motion on the default VRM", async () => {
     const catalog = JSON.parse(
       await readFile(`${repositoryRoot}/assets/avatar-motions-v5/catalog.json`, "utf8"),

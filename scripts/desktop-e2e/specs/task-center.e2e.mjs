@@ -222,10 +222,25 @@ async function ensureInterruptibleOfficeMcp() {
     await waitForDisplayed('.mcp-create-dialog-form [data-testid="mcp-tool-create_document"]');
     await clickWhenReady('[data-testid="mcp-save-new-server"]');
   }
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (name) => document.querySelector(".mcp-detail-header strong")?.textContent?.trim() === name,
+        serverName,
+      ),
+    { timeout: 20_000, timeoutMsg: "Saved stdio MCP was not selected" },
+  );
   const enabled = await browser.execute(
     () => document.querySelector('.mcp-detail-header input[type="checkbox"]')?.checked ?? false,
   );
   if (!enabled) await clickWhenReady('.mcp-detail-header [data-component="switch-root"]');
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        () => document.querySelector('.mcp-detail-header input[type="checkbox"]')?.checked === true,
+      ),
+    { timeout: 20_000, timeoutMsg: "Saved stdio MCP was not enabled" },
+  );
   await waitForDisplayed('[data-testid="mcp-tool-create_document"]');
   await clickWhenReady(".back-home");
   return serverName;

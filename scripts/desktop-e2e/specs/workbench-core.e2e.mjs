@@ -195,7 +195,8 @@ describe("Hachimi Workbench core lifecycle", () => {
 
     writeFileSync(systemGitGate, "normal\n", "utf8");
     await clickWhenReady('[data-testid="system-git-refresh"]');
-    await clickWhenReady('[data-testid="project-git-create-initial"]');
+    await clickWhenReady('[data-testid="project-git-create-initial"]', 75_000);
+    await waitForDisplayed(".project-git-initial-fields input");
     const identity = await $$(".project-git-initial-fields input");
     await identity[0].setValue("Hachimi Desktop E2E");
     await identity[1].setValue("desktop-e2e@hachimi.invalid");

@@ -4,6 +4,7 @@ import type {
   MotionTransitionProfile,
 } from "@hachimi/contracts";
 import { withMotionFeatureCacheBudget } from "./motion-feature-cache-budget";
+import { withMotionAssetLoadBudget } from "./motion-asset-load-budget";
 import type { VRM, VRMHumanBoneName } from "@pixiv/three-vrm";
 import { createVRMAnimationClip, type VRMAnimation } from "@pixiv/three-vrm-animation";
 import {
@@ -262,6 +263,7 @@ export class MotionAssetLibrary {
     private readonly loader: GLTFLoader,
     private readonly resolveAsset: (id: string) => Promise<MotionRuntimeAsset | null>,
     private readonly featureCache?: MotionFeatureCacheAdapter,
+    private readonly onAssetStage?: (id: string, stage: string) => void,
   ) {}
 
   setCatalog(entries: readonly MotionCatalogEntry[]): void {
@@ -441,20 +443,36 @@ export class MotionAssetLibrary {
       evictSources(this.sources, this.sourceUse, id);
       return shared;
     }
-    const pending = this.resolveAsset(id)
+    this.onAssetStage?.(id, "resolve");
+    const pending = withMotionAssetLoadBudget(this.resolveAsset(id), `${id} resolve`)
       .then(async (asset) => {
         if (!asset) throw new Error(`Unknown motion asset: ${id}`);
         this.entries.set(id, asset.entry);
-        const response = await fetch(asset.assetUrl, { cache: "force-cache" });
+        this.onAssetStage?.(id, "fetch");
+        const response = await withMotionAssetLoadBudget(
+          fetch(asset.assetUrl, { cache: "no-store", signal: AbortSignal.timeout(20_000) }),
+          `${id} fetch`,
+        );
         if (!response.ok) throw new Error(`Unable to read VRMA ${id} (${response.status})`);
-        const gltf = await this.loader.parseAsync(await response.arrayBuffer(), "");
+        this.onAssetStage?.(id, "bytes");
+        const bytes = await withMotionAssetLoadBudget(response.arrayBuffer(), `${id} bytes`);
+        this.onAssetStage?.(id, "parse");
+        const gltf = await withMotionAssetLoadBudget(
+          this.loader.parseAsync(bytes, ""),
+          `${id} parse`,
+        );
         const animations = gltf.userData["vrmAnimations"] as VRMAnimation[] | undefined;
         if (animations?.length !== 1) throw new Error(`VRMA ${id} must contain one animation`);
         this.sourceUse.set(id, ++this.useCounter);
         evictSources(this.sources, this.sourceUse, id);
+        this.onAssetStage?.(id, "ready");
         return animations[0]!;
       })
       .catch((error: unknown) => {
+        this.onAssetStage?.(
+          id,
+          `failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
         // Remove every alias of this failed load so derived motions can retry too.
         for (const [motionId, source] of this.sources) {
           if (source !== pending) continue;
