@@ -419,17 +419,33 @@ describe("Hachimi Workbench core lifecycle", () => {
 
     const childStarted = join(project, "terminal-child-started.txt");
     const childSurvived = join(project, "terminal-grandchild-survived.txt");
-    const childScript = `Start-Sleep -Seconds 4; Set-Content -LiteralPath '${childSurvived.replaceAll("'", "''")}' -Value escaped`;
+    const childScript = `[IO.File]::WriteAllText('${childStarted.replaceAll("'", "''")}', [string]$PID); Start-Sleep -Seconds 60; Set-Content -LiteralPath '${childSurvived.replaceAll("'", "''")}' -Value escaped`;
     const encodedChild = Buffer.from(childScript, "utf16le").toString("base64");
+    // Launch inside the existing ConPTY: Start-Process opens an independent
+    // console and a parent marker does not prove the descendant is running.
     await writeTerminal(
-      `Set-Content -LiteralPath '${childStarted.replaceAll("'", "''")}' -Value started; Start-Process powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','${encodedChild}'`,
+      `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodedChild}`,
     );
     await browser.waitUntil(() => existsSync(childStarted), {
-      timeout: 10_000,
+      timeout: 30_000,
       timeoutMsg: "Terminal grandchild fixture did not start",
     });
+    const childPid = Number(readFileSync(childStarted, "utf8"));
+    expect(Number.isInteger(childPid) && childPid > 0).toBe(true);
+    process.kill(childPid, 0);
     await clickWhenReady('[aria-label="关闭终端"], [aria-label="Close terminal"]');
-    await browser.pause(5_000);
+    await browser.waitUntil(
+      () => {
+        try {
+          process.kill(childPid, 0);
+          return false;
+        } catch (error) {
+          if (error.code === "ESRCH") return true;
+          throw error;
+        }
+      },
+      { timeout: 10_000, timeoutMsg: "Terminal descendant survived native termination" },
+    );
     expect(existsSync(childSurvived)).toBe(false);
 
     await openInspectorToolLauncher();
