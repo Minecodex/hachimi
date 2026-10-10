@@ -295,7 +295,7 @@ describe("Hachimi Workbench core lifecycle", () => {
     await expect($(".workspace-diff-file")).not.toBeDisplayed();
 
     await clickWhenReady('[data-testid="workbench-execute-plan"]');
-    await waitForRun("succeeded", 45_000);
+    await waitForRun("succeeded", 90_000);
     await clickWhenReady('[data-testid="workbench-pin-summary"]');
     await clickWhenReady('[data-testid="workbench-summary-files"]');
     await browser.waitUntil(

@@ -14,7 +14,12 @@ $matches = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
     $false
   }
 } | Sort-Object StartTime -Descending)
-$matches | Select-Object -Skip $keepNewest | Stop-Process -Force -ErrorAction SilentlyContinue
+$matches | Select-Object -Skip $keepNewest | ForEach-Object {
+  # Stop the owned application's full tree, including its WebView renderer.
+  # Killing only the parent can leave native children consuming resources
+  # through many restarts of the complete desktop suite.
+  & taskkill.exe /PID $_.Id /T /F *> $null
+}
 $deadline = [DateTime]::UtcNow.AddSeconds(5)
 do {
   Start-Sleep -Milliseconds 100
