@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -59,6 +60,31 @@ test("automation reports application exits before a DevTools endpoint is availab
     launchAutomationApplication(process.execPath, fixtureRoot(t), ["-e", "process.exit(23)"]),
     /exited with 23/,
   );
+});
+
+test("new automation launches leave an occupied preceding endpoint untouched", async (t) => {
+  const preceding = createServer();
+  await new Promise((resolve, reject) => {
+    preceding.once("error", reject);
+    preceding.listen(0, "127.0.0.1", resolve);
+  });
+  const priorValue = process.env.HACHIMI_DESKTOP_E2E_DEBUG_PORT;
+  const precedingPort = preceding.address().port;
+  process.env.HACHIMI_DESKTOP_E2E_DEBUG_PORT = String(precedingPort);
+  let application;
+  try {
+    application = await launchAutomationApplication(process.execPath, fixtureRoot(t), [
+      "-e",
+      fixtureApplication,
+    ]);
+    assert.notEqual(application.debuggerAddress, `127.0.0.1:${precedingPort}`);
+    assert.equal(preceding.listening, true);
+  } finally {
+    if (application) terminateProcessTree(application.pid);
+    await new Promise((resolve) => preceding.close(resolve));
+    if (priorValue === undefined) delete process.env.HACHIMI_DESKTOP_E2E_DEBUG_PORT;
+    else process.env.HACHIMI_DESKTOP_E2E_DEBUG_PORT = priorValue;
+  }
 });
 
 test("automation reports an unavailable executable without waiting for readiness", async (t) => {
