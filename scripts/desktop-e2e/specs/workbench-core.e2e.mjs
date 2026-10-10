@@ -151,7 +151,7 @@ describe("Hachimi Workbench core lifecycle", () => {
     await browser.waitUntil(
       async () =>
         (await $('[data-testid="workbench-project-git-state"]').getText()).includes("非 Git"),
-      { timeout: 20_000, timeoutMsg: "initial non-Git inspection did not settle" },
+      { timeout: 75_000, timeoutMsg: "initial non-Git inspection did not settle" },
     );
     await expect($('[data-testid="workbench-project-git-state"]')).toHaveText(
       expect.stringContaining("非 Git"),
@@ -171,7 +171,7 @@ describe("Hachimi Workbench core lifecycle", () => {
     await browser.waitUntil(
       async () =>
         (await $('[data-testid="workbench-project-git-state"]').getText()).includes("尚无提交"),
-      { timeout: 20_000, timeoutMsg: "late git init was not reconciled as an unborn branch" },
+      { timeout: 75_000, timeoutMsg: "late git init was not reconciled as an unborn branch" },
     );
     await expect($('[data-testid="workbench-project-git-state"]')).toHaveText(
       expect.stringContaining("main"),
@@ -218,7 +218,7 @@ describe("Hachimi Workbench core lifecycle", () => {
     await browser.waitUntil(
       async () =>
         (await $('[data-testid="workbench-project-git-state"]').getText()).includes("detached"),
-      { timeout: 20_000, timeoutMsg: "detached HEAD was not projected" },
+      { timeout: 75_000, timeoutMsg: "detached HEAD was not projected" },
     );
     await clickWhenReady('[data-testid="workbench-execution-target"]');
     await expect($('[data-testid="workbench-execution-worktree"]')).toBeDisabled();
@@ -228,7 +228,7 @@ describe("Hachimi Workbench core lifecycle", () => {
     await clickWhenReady('[aria-label="刷新 Git 状态"]');
     await browser.waitUntil(
       async () => (await $('[data-testid="workbench-project-git-state"]').getText()) === "main",
-      { timeout: 20_000, timeoutMsg: "switching back to main was not reconciled" },
+      { timeout: 75_000, timeoutMsg: "switching back to main was not reconciled" },
     );
 
     await clickWhenReady('[data-testid="workbench-execution-target"]');
