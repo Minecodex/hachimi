@@ -10,16 +10,21 @@ import {
 
 test("records a rendered ambient action that ends between driver polls", async ({ page }) => {
   await page.goto("about:blank");
-  await page.setContent('<canvas class="pet-avatar-canvas" data-motion-slots="base"></canvas>');
+  await page.setContent(
+    '<canvas class="pet-avatar-canvas" data-motion-ambient="fixture.ambient.stale" data-motion-action-id="fixture.direct" data-motion-slots="base,action"></canvas>',
+  );
   await page.evaluate(beginAmbientObservation);
+  expect(await page.evaluate(readAmbientObservation)).toBe(false);
   await page.evaluate(async () => {
     const canvas = document.querySelector(".pet-avatar-canvas");
     canvas.setAttribute("data-motion-ambient", "fixture.ambient.once");
+    canvas.setAttribute("data-motion-action-id", "fixture.ambient.once");
     canvas.setAttribute("data-motion-slots", "base,action");
     await new Promise((resolve) => requestAnimationFrame(resolve));
     canvas.setAttribute("data-motion-slots", "base");
     await new Promise((resolve) => requestAnimationFrame(resolve));
     canvas.setAttribute("data-motion-ambient", "fixture.ambient.next");
+    canvas.setAttribute("data-motion-action-id", "fixture.ambient.next");
     canvas.setAttribute("data-motion-slots", "base,action");
   });
   await expect(page.locator("canvas")).toHaveAttribute("data-motion-slots", "base,action");

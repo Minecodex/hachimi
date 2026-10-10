@@ -1437,6 +1437,9 @@ for (const route of ["general", "llm", "voice", "avatar", "skills", "mcp"] as co
   test(`production settings ${route} uses the shared page contract`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await installTauriMocks(page);
+    if (route === "avatar") {
+      await page.route("http://hachimi-avatar.localhost/**", (request) => request.abort("failed"));
+    }
     await page.goto(`http://127.0.0.1:1420/workbench.html?route=settings/${route}`);
     await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
     await expect(page.locator("html")).toHaveJSProperty("scrollWidth", 1280);
