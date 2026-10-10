@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { _setGlobal } from "@wdio/globals";
 import { remote } from "webdriverio";
 
+/* global document */
+
 import { cleanupExecutableProcesses } from "./processes.mjs";
 import { attachedWebviewCapabilities, launchAutomationApplication } from "./application.mjs";
 
@@ -16,7 +18,11 @@ export async function switchToWorkbench() {
         try {
           await browser.switchToWindow(handle);
           const [title, url] = await Promise.all([browser.getTitle(), browser.getUrl()]);
-          if (title.includes("Hachimi Workbench") || url.includes("/workbench.html")) return true;
+          const workbench = await browser.execute(() =>
+            Boolean(document.querySelector(".workbench-window")),
+          );
+          if (workbench || title.includes("Hachimi Workbench") || url.includes("/workbench.html"))
+            return true;
         } catch {
           // A startup WebView may disappear while the native app creates the
           // Workbench. The next poll only considers current handles.

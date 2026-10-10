@@ -18,6 +18,8 @@ git push -u origin feature/your-change
 
 短动作和视线反馈使用渲染帧属性的 MutationObserver 留存证据，避免 WebDriver 的轮询间隔错过真实发生的短事件；动作 ID 和原有角度阈值均须满足。初始提交 UI 等待预算覆盖后端 30 秒操作和随后的 checkout 刷新，不减少 Git 索引及空根提交断言。
 
+桌面规格按真实 Workbench DOM 识别已创建的窗口，避免动态标题与 URL 在界面就绪后仍导致识别失败。Multi-Agent fixture 的 wait 使用 90 秒预算容纳托管环境的冷准备；仍必须得到真实完成的子任务结果，取消或缺少结果不能通过。
+
 保留 Windows 静态检查、Rust、UI/视觉、桌面 E2E、标准用户门禁和 macOS 原生测试。`CI` 汇总全部六个任务。
 
 工作流也支持主分支 push 和手动运行。手动运行使用 Actions 页面的 Run workflow，选择待检查的分支；功能分支首次引入新工作流时，先创建 PR 触发检查。

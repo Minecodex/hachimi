@@ -2,3 +2,6 @@ self-hosted-runner:
   labels:
     - hachimi-sandbox
     - hachimi-standard-user
+    - hachimi-staging
+    - hachimi-enterprise-staging
+    - hachimi-channels-staging
