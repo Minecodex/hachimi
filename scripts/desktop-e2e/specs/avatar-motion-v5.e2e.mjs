@@ -428,11 +428,15 @@ async function invokeTauri(command, args = {}) {
 }
 
 async function emitToPet(event, payload) {
+  // Event emission belongs to the Workbench capability. The Pet observer
+  // remains installed while its window is in the background.
+  await switchToWorkbench();
   const result = await invokeTauri("plugin:event|emit_to", {
     target: { kind: "AnyLabel", label: "pet" },
     event,
     payload,
   });
+  await switchToPet();
   return result;
 }
 

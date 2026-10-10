@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { clickWhenReady, hoverWhenReady, waitForDisplayed } from "../support/interactions.mjs";
 import { switchToWorkbench } from "../support/windows.mjs";
 
-/* global HTMLButtonElement, HTMLElement, document, getComputedStyle */
+/* global HTMLButtonElement, HTMLElement, document */
 
 async function clickDialogPrimary() {
   await clickWhenReady('[role="dialog"] .dialog-actions button:last-child');
@@ -13,32 +13,11 @@ async function openSkillActions(skillName) {
   const rowSelector = `[data-testid="skill-row-${skillName}"]`;
   const triggerSelector = `[data-testid="skill-actions-${skillName}"]`;
   await hoverWhenReady(rowSelector);
+  await clickWhenReady(triggerSelector);
   await browser.waitUntil(
-    async () =>
-      browser.execute(
-        (rowTarget, triggerTarget) => {
-          const row = document.querySelector(rowTarget);
-          const trigger = document.querySelector(triggerTarget);
-          if (!(row instanceof HTMLElement) || !(trigger instanceof HTMLElement)) return false;
-          row.focus();
-          trigger.focus();
-          const style = getComputedStyle(trigger);
-          const bounds = trigger.getBoundingClientRect();
-          return (
-            document.activeElement === trigger &&
-            style.display !== "none" &&
-            style.visibility !== "hidden" &&
-            bounds.width > 0 &&
-            bounds.height > 0
-          );
-        },
-        rowSelector,
-        triggerSelector,
-      ),
-    { timeout: 20_000, timeoutMsg: `Skill actions did not become visible: ${skillName}` },
+    async () => (await $(triggerSelector).getAttribute("aria-expanded")) === "true",
+    { timeout: 20_000, timeoutMsg: `Skill action menu did not open: ${skillName}` },
   );
-  // Activate the focused menu trigger through its supported keyboard path.
-  await browser.keys("Enter");
 }
 
 async function selectMenuAction(selector) {

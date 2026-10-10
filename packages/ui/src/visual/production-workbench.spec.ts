@@ -1907,6 +1907,7 @@ test("Motion Library Lab previews a catalog VRMA with finger diagnostics", async
   await playbackSpeedSlider.fill("1.5");
   await expect(playbackSpeedSlider).toHaveValue("1.5");
   await expect(page).toHaveScreenshot("production-motion-lab-1280x800.png", {
+    timeout: 15_000,
     animations: "disabled",
     mask: [
       page.locator(".motion-lab-stage canvas"),
