@@ -10,6 +10,10 @@ type InstallTauriMocks = (
 
 export function installSessionScrollVisualTest(installTauriMocks: InstallTauriMocks) {
   test("plan mode uses a removable composer chip", async ({ page }) => {
+    // This flow includes cold Vite mounting, popup state, hover, keyboard
+    // focus and responsive layout. Its total budget must cover the bounded
+    // assertions without aborting a still-progressing first mount.
+    test.setTimeout(60_000);
     await page.setViewportSize({ width: 1280, height: 800 });
     await installTauriMocks(page, true);
     await page.goto("http://127.0.0.1:1420/workbench.html?route=home");
