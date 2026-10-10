@@ -2,7 +2,6 @@ name: Windows Release Gate
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
@@ -20,7 +19,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  source-ci:
+    uses: ./.github/workflows/ci.yml
+    with:
+      full: true
+
   build-candidate:
+    needs: source-ci
     runs-on: [self-hosted, windows, x64, hachimi-sandbox]
     environment: hachimi-sandbox-release
     timeout-minutes: 180

@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - hachimi-sandbox
+    - hachimi-standard-user

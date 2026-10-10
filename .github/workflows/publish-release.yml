@@ -63,6 +63,12 @@ jobs:
             if (staging.data.conclusion !== 'success') core.setFailed('staging_workflow_not_successful');
             if (windows.data.head_sha !== staging.data.head_sha) core.setFailed('release_run_commit_mismatch');
             if (windows.data.head_sha !== context.sha) core.setFailed('release_checkout_commit_mismatch');
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              run_id: windows.data.id, per_page: 100,
+            });
+            const sourceGate = jobs.find((job) => job.name === 'source-ci / CI');
+            if (!sourceGate || sourceGate.conclusion !== 'success') core.setFailed('full_platform_source_ci_not_successful');
       - name: Download immutable candidate
         uses: actions/download-artifact@v4
         with:

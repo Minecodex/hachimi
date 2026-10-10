@@ -14,6 +14,10 @@ git push -u origin feature/your-change
 
 ## 自动检查范围
 
+每个 PR 保留原生 Windows/macOS ARM64 的源码检查、共享前端/视觉回归，以及 Windows 的核心桌面、Git/Forge、恢复、任务和宿主 E2E。完整动作库帧级验收通过 CI 的 full 输入及版本发布工作流执行，属于独立的通过范围。没有定时任务；beta 标签和 Windows 版本候选均先复用同一提交的完整 CI，才继续生成候选制品。正式 RC/GA 的既有真实外部环境和安装验收门槛继续有效。
+
+短动作和视线反馈使用渲染帧属性的 MutationObserver 留存证据，避免 WebDriver 的轮询间隔错过真实发生的短事件；动作 ID 和原有角度阈值均须满足。初始提交 UI 等待预算覆盖后端 30 秒操作和随后的 checkout 刷新，不减少 Git 索引及空根提交断言。
+
 保留 Windows 静态检查、Rust、UI/视觉、桌面 E2E、标准用户门禁和 macOS 原生测试。`CI` 汇总全部六个任务。
 
 工作流也支持主分支 push 和手动运行。手动运行使用 Actions 页面的 Run workflow，选择待检查的分支；功能分支首次引入新工作流时，先创建 PR 触发检查。

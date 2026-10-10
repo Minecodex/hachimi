@@ -204,7 +204,9 @@ describe("Hachimi Workbench core lifecycle", () => {
     await browser.waitUntil(
       async () =>
         !(await $('[data-testid="workbench-project-git-state"]').getText()).includes("尚无提交"),
-      { timeout: 20_000, timeoutMsg: "empty initial commit did not make the repository ready" },
+      // The native operation has a 30-second budget, followed by a real
+      // checkout refresh. The UI assertion must cover that entire contract.
+      { timeout: 45_000, timeoutMsg: "empty initial commit did not make the repository ready" },
     );
 
     expect(sha256File(absoluteIndex)).toBe(indexBefore);

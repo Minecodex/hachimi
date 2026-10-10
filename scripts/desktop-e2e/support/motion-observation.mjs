@@ -35,3 +35,52 @@ export function endAmbientObservation() {
   window.__HACHIMI_AMBIENT_OBSERVATION__?.observer?.disconnect();
   delete window.__HACHIMI_AMBIENT_OBSERVATION__;
 }
+
+// A one-shot action or short gaze response can complete between WebDriver
+// polls. Observe real rendered frame attributes before dispatching the input.
+export function beginMotionObservation(motionId) {
+  const canvas = document.querySelector(".pet-avatar-canvas");
+  const observation = { started: false, recovered: false, observer: null };
+  const capture = () => {
+    if (canvas.getAttribute("data-motion-action-id") === motionId) observation.started = true;
+    if (observation.started && canvas.getAttribute("data-motion-slots") === "base") {
+      observation.recovered = true;
+    }
+  };
+  observation.observer = new MutationObserver(capture);
+  observation.observer.observe(canvas, {
+    attributes: true,
+    attributeFilter: ["data-motion-action-id", "data-motion-slots"],
+  });
+  window.__HACHIMI_MOTION_OBSERVATION__?.observer?.disconnect();
+  window.__HACHIMI_MOTION_OBSERVATION__ = observation;
+}
+
+export function readMotionObservation() {
+  return window.__HACHIMI_MOTION_OBSERVATION__?.started === true;
+}
+
+export function readMotionRecovery() {
+  return window.__HACHIMI_MOTION_OBSERVATION__?.recovered === true;
+}
+
+export function beginGazeObservation() {
+  const canvas = document.querySelector(".pet-avatar-canvas");
+  const observation = { yaw: 0, observer: null };
+  observation.observer = new MutationObserver(() => {
+    observation.yaw = Math.max(
+      observation.yaw,
+      Number(canvas.getAttribute("data-motion-head-yaw")),
+    );
+  });
+  observation.observer.observe(canvas, {
+    attributes: true,
+    attributeFilter: ["data-motion-head-yaw"],
+  });
+  window.__HACHIMI_GAZE_OBSERVATION__?.observer?.disconnect();
+  window.__HACHIMI_GAZE_OBSERVATION__ = observation;
+}
+
+export function readGazeObservation() {
+  return window.__HACHIMI_GAZE_OBSERVATION__?.yaw ?? 0;
+}

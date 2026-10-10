@@ -5,12 +5,22 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      full:
+        type: boolean
+        default: false
+        description: Include full desktop motion and lifecycle acceptance
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -89,6 +99,7 @@ jobs:
     timeout-minutes: 90
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target/desktop-e2e-build
+      HACHIMI_DESKTOP_E2E_GREP: ${{ inputs.full && '.*' || '^(?!Avatar Motion Runtime V5).*' }}
     steps:
       - uses: actions/checkout@v4
         with:

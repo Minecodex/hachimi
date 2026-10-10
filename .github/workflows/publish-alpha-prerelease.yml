@@ -50,6 +50,8 @@ jobs:
             });
             const build = jobs.find((job) => job.name === 'build-candidate');
             if (!build || build.conclusion !== 'success') core.setFailed('candidate_build_not_successful');
+            const sourceGate = jobs.find((job) => job.name === 'source-ci / CI');
+            if (!sourceGate || sourceGate.conclusion !== 'success') core.setFailed('full_platform_source_ci_not_successful');
             core.setOutput('commit_sha', run.head_sha);
       - uses: actions/checkout@v4
         with:

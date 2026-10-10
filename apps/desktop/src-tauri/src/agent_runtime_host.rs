@@ -164,7 +164,8 @@ impl DesktopStepWorldStateRefresher {
                         hash_json(&("workspace_host_unavailable", error.to_string()));
                     workspace_ready = false;
                     disabled_tool_names.extend(self.workspace_tool_names.iter().cloned());
-                    diagnostics.push("Workspace Host readiness could not be verified; Workspace tools are disabled for this Step".into());
+                    tracing::warn!(error = %error, "Workspace Host context refresh failed");
+                    diagnostics.push(format!("Workspace Host readiness could not be verified ({error}); Workspace tools are disabled for this Step"));
                     drift_codes.push("workspace_host_unavailable".to_owned());
                 }
             }
