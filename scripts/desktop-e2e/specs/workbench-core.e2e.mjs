@@ -126,7 +126,11 @@ async function writeTerminal(command) {
     );
     powerShellProcesses.add(processId);
   }
-  await browser.keys(command);
+  // EdgeDriver serializes one keyboard action per character. Bound each
+  // request when sending the long encoded ConPTY descendant command.
+  for (let offset = 0; offset < command.length; offset += 32) {
+    await browser.keys(command.slice(offset, offset + 32));
+  }
   await browser.keys("Enter");
 }
 

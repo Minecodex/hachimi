@@ -7,8 +7,11 @@ export function beginAmbientObservation() {
   const observation = { motionId: null, recovered: false, observer: null };
   const capture = () => {
     const id = canvas.getAttribute("data-motion-ambient");
+    const action = canvas.getAttribute("data-motion-action-id");
     const slots = canvas.getAttribute("data-motion-slots");
-    if (!observation.motionId && id && slots?.includes("action")) observation.motionId = id;
+    if (!observation.motionId && id && action === id && slots?.includes("action")) {
+      observation.motionId = id;
+    }
     if (observation.motionId && id === observation.motionId && slots === "base") {
       observation.recovered = true;
       observation.observer?.disconnect();
@@ -17,7 +20,7 @@ export function beginAmbientObservation() {
   observation.observer = new MutationObserver(capture);
   observation.observer.observe(canvas, {
     attributes: true,
-    attributeFilter: ["data-motion-ambient", "data-motion-slots"],
+    attributeFilter: ["data-motion-ambient", "data-motion-action-id", "data-motion-slots"],
   });
   window.__HACHIMI_AMBIENT_OBSERVATION__ = observation;
   capture();
