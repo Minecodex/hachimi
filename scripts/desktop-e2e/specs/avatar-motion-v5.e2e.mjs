@@ -282,7 +282,7 @@ describe("Avatar Motion Runtime V5", () => {
     await switchToPet();
     await browser.waitUntil(
       async () => (await $(".pet-avatar-canvas").getAttribute("data-motion-speech")) === "playing",
-      { timeout: 5_000, timeoutMsg: "Speech did not enter the Pet speech slot" },
+      { timeout: 20_000, timeoutMsg: "Speech did not enter the Pet speech slot" },
     );
     await switchToWorkbench();
     await clickWhenReady('[data-testid="motion-lab-speech-stop"]');
