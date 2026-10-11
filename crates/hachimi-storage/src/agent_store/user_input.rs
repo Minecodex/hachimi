@@ -19,7 +19,7 @@ impl AgentStore {
         request: &UserInputRequestRecord,
     ) -> Result<UserInputRequestRecord, AgentStoreError> {
         validate_questions(request)?;
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let run = get_run_tx(&mut transaction, &request.run_id)
             .await?
             .ok_or_else(|| AgentStoreError::RunNotFound(request.run_id.clone()))?;
@@ -126,7 +126,7 @@ impl AgentStore {
         &self,
         resolution: &UserInputResolution,
     ) -> Result<UserInputRequestRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query("SELECT * FROM user_input_requests WHERE id = ?")
             .bind(resolution.request_id.as_str())
             .fetch_optional(&mut *transaction)
@@ -267,7 +267,7 @@ impl AgentStore {
         resolved_at_ms: i64,
         resolved_by: &str,
     ) -> Result<u64, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let rows = sqlx::query(
             "SELECT id, session_id, item_id FROM user_input_requests WHERE run_id = ? AND status = 'pending'",
         )
@@ -310,7 +310,7 @@ impl AgentStore {
         request_id: &UserInputRequestId,
         resolved_at_ms: i64,
     ) -> Result<UserInputRequestRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query("SELECT * FROM user_input_requests WHERE id = ?")
             .bind(request_id.as_str())
             .fetch_optional(&mut *transaction)

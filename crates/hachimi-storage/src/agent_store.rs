@@ -232,7 +232,7 @@ impl AgentStore {
         &self,
         mut plan: PlanDocument,
     ) -> Result<(PlanDocument, PlanConfirmation), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if let Some(existing) =
             get_plan_document_by_run_tx(&mut transaction, &plan.source_run_id).await?
         {
@@ -328,7 +328,7 @@ impl AgentStore {
         status: PlanConfirmationStatus,
         resolved_at_ms: i64,
     ) -> Result<PlanConfirmation, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let result = sqlx::query(
             "UPDATE plan_confirmations SET status = ?, resolved_at_ms = ? WHERE plan_id = ? AND status = ?",
         )
@@ -370,7 +370,7 @@ impl AgentStore {
         explanation: Option<&str>,
         steps: &[hachimi_protocol::PlanStep],
     ) -> Result<ExecutionPlanState, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let run = get_run_tx(&mut transaction, execution_run_id)
             .await?
             .ok_or_else(|| AgentStoreError::RunNotFound(execution_run_id.clone()))?;
@@ -562,7 +562,7 @@ impl AgentStore {
         run_id: &RunId,
         run_generation: u64,
     ) -> Result<(), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if let Some(holder) = sqlx::query_scalar::<_, String>(
             "SELECT run_id FROM checkout_write_leases WHERE checkout_id = ?",
         )
@@ -613,7 +613,7 @@ impl AgentStore {
         &self,
         session: &SessionRecord,
     ) -> Result<SessionRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         sqlx::query(
             "INSERT INTO sessions (id, context_kind, context_json, entry_profile, title, archived, pinned, parent_session_id, source_run_id, created_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
@@ -679,7 +679,7 @@ impl AgentStore {
         idempotency_key: &str,
         run: &RunRecord,
     ) -> Result<RunRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if let Some(existing_id) = sqlx::query_scalar::<_, String>(
             "SELECT resource_id FROM idempotency_records WHERE principal = ? AND method = 'run.start' AND idempotency_key = ?",
         )
@@ -764,7 +764,7 @@ impl AgentStore {
         next: RunStatus,
         failure_code: Option<&str>,
     ) -> Result<RunRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let current = get_run_tx(&mut transaction, run_id)
             .await?
             .ok_or_else(|| AgentStoreError::RunNotFound(run_id.clone()))?;
@@ -864,7 +864,7 @@ impl AgentStore {
         event: &str,
         payload: Value,
     ) -> Result<RunEventEnvelope, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let envelope = append_event_tx(
             &mut transaction,
             session_id,
@@ -886,7 +886,7 @@ impl AgentStore {
         typed_payload: RunEventPayload,
         payload: Value,
     ) -> Result<RunEventEnvelope, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let envelope = append_event_typed_tx(
             &mut transaction,
             session_id,
@@ -931,7 +931,7 @@ impl AgentStore {
         &self,
         mut item: TranscriptItem,
     ) -> Result<TranscriptItem, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         item.sequence =
             next_sequence_tx(&mut transaction, &item.session_id, item.created_at_ms).await?;
         sqlx::query(
@@ -972,7 +972,7 @@ impl AgentStore {
         status: ItemStatus,
         payload: ItemPayload,
     ) -> Result<TranscriptItem, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query("SELECT * FROM transcript_items WHERE id = ?")
             .bind(item_id.as_str())
             .fetch_optional(&mut *transaction)
@@ -1042,7 +1042,7 @@ impl AgentStore {
         if !checkpoint.quality.accepted {
             return Err(AgentStoreError::CompactionQualityRejected);
         }
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let latest =
             latest_compaction_checkpoint_tx(&mut transaction, &checkpoint.session_id).await?;
         match latest.as_ref() {
@@ -1185,7 +1185,7 @@ impl AgentStore {
                 ("streamable_http", "", &[][..], None, Some(url.as_str()))
             }
         };
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         sqlx::query(
             "INSERT INTO mcp_servers (id, display_name, enabled, command, args_json, cwd, read_only_tools_json, startup_timeout_ms, request_timeout_ms, max_message_bytes, created_at_ms, updated_at_ms, transport_kind, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET display_name = excluded.display_name, enabled = excluded.enabled, command = excluded.command, args_json = excluded.args_json, cwd = excluded.cwd, read_only_tools_json = excluded.read_only_tools_json, startup_timeout_ms = excluded.startup_timeout_ms, request_timeout_ms = excluded.request_timeout_ms, max_message_bytes = excluded.max_message_bytes, transport_kind = excluded.transport_kind, url = excluded.url, updated_at_ms = excluded.updated_at_ms",
         )
@@ -1352,7 +1352,7 @@ impl AgentStore {
         &self,
         artifact: &ArtifactRecord,
     ) -> Result<ArtifactRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         sqlx::query(
             "INSERT INTO artifacts (id, run_id, kind, display_name, content_hash, managed_path, metadata_json, created_at_ms) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
         )
@@ -1407,7 +1407,7 @@ impl AgentStore {
         if approval.status != ApprovalStatus::Pending {
             return Err(AgentStoreError::ApprovalNotPending(approval.id.clone()));
         }
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         sqlx::query(
             "INSERT INTO approval_requests (id, session_id, run_id, tool_call_id, run_generation, status, action, resource, parameter_hash, risk_summary, target_host, required_scopes_json, grant_scope, uses_remaining, requester_principal, resolved_by, expires_at_ms, created_at_ms, resolved_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
@@ -1484,7 +1484,7 @@ impl AgentStore {
         ) {
             return Err(AgentStoreError::InvalidApprovalDecision);
         }
-        let mut transaction = self.pool.begin_with(SQLITE_BEGIN_IMMEDIATE).await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query("SELECT * FROM approval_requests WHERE id = ?")
             .bind(resolution.approval_id.as_str())
             .fetch_optional(&mut *transaction)
@@ -1550,7 +1550,7 @@ impl AgentStore {
         run_id: &RunId,
         resolved_at_ms: i64,
     ) -> Result<u64, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let pending = sqlx::query(
             "SELECT id, session_id FROM approval_requests WHERE run_id = ? AND status = 'pending'",
         )
@@ -1582,7 +1582,7 @@ impl AgentStore {
     }
 
     pub async fn recover_interrupted(&self) -> Result<RecoveryReport, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let active_runs = sqlx::query(
             "SELECT id, session_id, generation, status AS effective_status FROM runs WHERE status IN ('preparing', 'running', 'waiting_approval', 'waiting_user_input', 'cancelling')",
         )
@@ -1873,7 +1873,7 @@ impl AgentStore {
         if run_recovery_enabled || report.interrupted_runs == 0 {
             return Ok(report);
         }
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let recoverable = sqlx::query(
             "SELECT id, session_id, status AS effective_status FROM runs WHERE status IN ('recovering', 'waiting_recovery_decision')",
         )

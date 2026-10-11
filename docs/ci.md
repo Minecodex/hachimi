@@ -19,4 +19,6 @@ PowerShell 夹具执行编码的就绪命令后检查实际输出标记，避免
 
 专用 `External Staging Gate` 和 `Publish Verified RC or GA` 已从 Actions 移除。Actions 不使用 self-hosted Runner、受保护 Environment、外部 API Secret 或人工配置的扩展 ID；真实环境测试继续保留独立脚本与六类证据校验，见 [独立验收规范](RELEASE_GATES.md)。
 
+完整七组桌面规格使用 180 分钟 Job 上限，核心 PR 保持 90 分钟；单项审批、进程重启和动作矩阵的原断言与等待边界保留。完整回归发现的跨进程 SQLite 写入冲突通过共享 `BEGIN IMMEDIATE` 写事务入口修复，增加双 Store 的实际 WAL 并发测试。进程清理允许枚举后已退出的子进程，仍精确校验目标路径、清理整棵子进程树并要求最终进程集合为空。
+
 beta 和 alpha 发布仍验证同一候选的源码、制品及哈希；不附带真实安装身份或外部服务认证结论。完整环境未具备时，这些检查保持待验证，不作为 Actions 成功的一部分。没有定时任务。

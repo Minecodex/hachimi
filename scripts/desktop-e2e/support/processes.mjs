@@ -18,7 +18,16 @@ $matches | Select-Object -Skip $keepNewest | ForEach-Object {
   # Stop the owned application's full tree, including its WebView renderer.
   # Killing only the parent can leave native children consuming resources
   # through many restarts of the complete desktop suite.
-  & taskkill.exe /PID $_.Id /T /F *> $null
+  # A short-lived owned child can exit between enumeration and taskkill.
+  # Windows PowerShell treats native stderr as an error under Stop, even
+  # when redirected. Always finish enumeration and verify the remaining set.
+  $savedPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    & taskkill.exe /PID $_.Id /T /F *> $null
+  } finally {
+    $ErrorActionPreference = $savedPreference
+  }
 }
 $deadline = [DateTime]::UtcNow.AddSeconds(5)
 do {
@@ -91,7 +100,12 @@ export function cleanupExecutableProcesses(executable, { keepNewest = 0 } = {}) 
     },
   );
   if (result.status !== 0) {
-    throw new Error("Desktop E2E could not clean its exact application process set");
+    const diagnostic = String(result.stderr || result.stdout || "")
+      .trim()
+      .slice(0, 512);
+    throw new Error(
+      `Desktop E2E could not clean its exact application process set (exit=${result.status}): ${diagnostic}`,
+    );
   }
 }
 

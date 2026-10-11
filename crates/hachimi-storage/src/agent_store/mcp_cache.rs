@@ -39,7 +39,7 @@ impl AgentStore {
                 value: "invalid opaque reference".into(),
             });
         }
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let previous = sqlx::query("SELECT auth_reference FROM mcp_servers WHERE id = ?")
             .bind(server_id.as_str())
             .fetch_optional(&mut *transaction)
@@ -61,7 +61,7 @@ impl AgentStore {
         &self,
         progress: &McpToolProgressRecord,
     ) -> Result<bool, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let Some(run) = get_run_tx(&mut transaction, &progress.run_id).await? else {
             transaction.commit().await?;
             return Ok(false);
@@ -168,7 +168,7 @@ impl AgentStore {
         errors: &BTreeMap<String, String>,
         refreshed_at_ms: i64,
     ) -> Result<McpInventorySnapshot, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if !errors.contains_key("resources") {
             replace_kind(
                 &mut transaction,
