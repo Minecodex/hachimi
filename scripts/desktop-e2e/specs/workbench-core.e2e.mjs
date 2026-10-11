@@ -127,7 +127,7 @@ async function writeTerminal(command) {
   if (!powerShellProcesses.has(processId)) {
     // The verified default shell can be CMD on a hosted standard-user profile.
     // Enter PowerShell explicitly before sending the PowerShell-only fixture.
-    const readyMarker = `HACHIMI_POWERSHELL_READY_${processId}`;
+    const readyMarker = `PS_READY_${createHash("sha256").update(processId).digest("hex").slice(0, 12)}`;
     const handshake = Buffer.from(
       `Write-Output '${readyMarker.replaceAll("'", "''")}'`,
       "utf16le",
