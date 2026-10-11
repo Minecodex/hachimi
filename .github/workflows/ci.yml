@@ -99,7 +99,7 @@ jobs:
     timeout-minutes: 90
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target/desktop-e2e-build
-      HACHIMI_DESKTOP_E2E_GREP: ${{ inputs.full && '.*' || '^(?!Avatar Motion Runtime V5).*' }}
+      HACHIMI_DESKTOP_E2E_PROFILE: ${{ inputs.full && 'release' || 'pr' }}
     steps:
       - uses: actions/checkout@v4
         with:

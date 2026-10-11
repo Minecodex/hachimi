@@ -106,19 +106,37 @@ async function submitPlanUserInput() {
 
 const powerShellProcesses = new Set();
 
+async function typeTerminalCommand(command) {
+  // Bound EdgeDriver keyboard requests, including the encoded shell handshake.
+  for (let offset = 0; offset < command.length; offset += 32) {
+    await browser.keys(command.slice(offset, offset + 32));
+  }
+  await browser.keys("Enter");
+}
+
 async function writeTerminal(command) {
   const terminal = await $(".terminal-session.active .xterm");
   await terminal.waitForDisplayed({ timeout: 20_000 });
   await terminal.click();
+  await browser.waitUntil(
+    async () => Boolean(await $(".terminal-session.active").getAttribute("data-process-id")),
+    { timeout: 20_000, timeoutMsg: "Terminal fixture process identity did not become ready" },
+  );
   const processId = await $(".terminal-session.active").getAttribute("data-process-id");
+  if (!processId) throw new Error("Terminal fixture has no live process identity");
   if (!powerShellProcesses.has(processId)) {
     // The verified default shell can be CMD on a hosted standard-user profile.
     // Enter PowerShell explicitly before sending the PowerShell-only fixture.
-    await browser.keys("powershell.exe -NoProfile");
-    await browser.keys("Enter");
+    const readyMarker = `HACHIMI_POWERSHELL_READY_${processId}`;
+    const handshake = Buffer.from(
+      `Write-Output '${readyMarker.replaceAll("'", "''")}'`,
+      "utf16le",
+    ).toString("base64");
+    await typeTerminalCommand(
+      `powershell.exe -NoLogo -NoProfile -NoExit -EncodedCommand ${handshake}`,
+    );
     await browser.waitUntil(
-      async () =>
-        (await $(".terminal-session.active .xterm-rows").getText()).includes("Windows PowerShell"),
+      async () => (await $(".terminal-session.active .xterm-rows").getText()).includes(readyMarker),
       {
         timeout: 20_000,
         timeoutMsg: "PowerShell fixture interpreter did not start",
@@ -126,12 +144,7 @@ async function writeTerminal(command) {
     );
     powerShellProcesses.add(processId);
   }
-  // EdgeDriver serializes one keyboard action per character. Bound each
-  // request when sending the long encoded ConPTY descendant command.
-  for (let offset = 0; offset < command.length; offset += 32) {
-    await browser.keys(command.slice(offset, offset + 32));
-  }
-  await browser.keys("Enter");
+  await typeTerminalCommand(command);
 }
 
 function petEvidenceExists(project) {

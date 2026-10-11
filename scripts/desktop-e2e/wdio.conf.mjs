@@ -13,6 +13,11 @@ const artifacts =
   process.env.HACHIMI_DESKTOP_E2E_ARTIFACTS ?? resolve("target/desktop-e2e-artifacts");
 mkdirSync(artifacts, { recursive: true });
 const requestedSpec = process.env.HACHIMI_DESKTOP_E2E_SPEC;
+const profile = process.env.HACHIMI_DESKTOP_E2E_PROFILE ?? "release";
+if (!["pr", "release"].includes(profile))
+  throw new Error(`Unknown desktop E2E profile: ${profile}`);
+const coreSpecs = ["workbench-core", "resume-rejoin", "extensions-settings"];
+const releaseSpecs = ["agent-tools", "host-integrations", "task-center", "avatar-motion-v5"];
 const attachToApplication = process.env.HACHIMI_DESKTOP_E2E_ATTACH === "1";
 
 export const config = {
@@ -22,15 +27,9 @@ export const config = {
   path: "/",
   specs: requestedSpec
     ? [resolve(requestedSpec)]
-    : [
-        resolve("scripts/desktop-e2e/specs/workbench-core.e2e.mjs"),
-        resolve("scripts/desktop-e2e/specs/resume-rejoin.e2e.mjs"),
-        resolve("scripts/desktop-e2e/specs/agent-tools.e2e.mjs"),
-        resolve("scripts/desktop-e2e/specs/extensions-settings.e2e.mjs"),
-        resolve("scripts/desktop-e2e/specs/host-integrations.e2e.mjs"),
-        resolve("scripts/desktop-e2e/specs/task-center.e2e.mjs"),
-        resolve("scripts/desktop-e2e/specs/avatar-motion-v5.e2e.mjs"),
-      ],
+    : [...coreSpecs, ...(profile === "release" ? releaseSpecs : [])].map((spec) =>
+        resolve(`scripts/desktop-e2e/specs/${spec}.e2e.mjs`),
+      ),
   maxInstances: 1,
   capabilities: [
     attachToApplication

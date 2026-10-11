@@ -22,6 +22,8 @@ $credential = [pscredential]::new($account, $password)
 $userCreated = $false
 $desktopGrep = if ($env:HACHIMI_DESKTOP_E2E_GREP) { $env:HACHIMI_DESKTOP_E2E_GREP } else { ".*" }
 $grepBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($desktopGrep))
+$desktopProfile = if ($env:HACHIMI_DESKTOP_E2E_PROFILE) { $env:HACHIMI_DESKTOP_E2E_PROFILE } else { "release" }
+if ($desktopProfile -notin @("pr", "release")) { throw "desktop_ci_profile_invalid" }
 
 try {
     Push-Location $repositoryRoot
@@ -46,7 +48,7 @@ try {
 
     $innerScript = Join-Path $workRoot "run-desktop.ps1"
     @'
-param([string]$RepositoryRoot, [string]$NodeExecutable, [string]$WorkRoot, [string]$GrepBase64)
+param([string]$RepositoryRoot, [string]$NodeExecutable, [string]$WorkRoot, [string]$GrepBase64, [ValidateSet("pr", "release")][string]$DesktopProfile)
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -60,9 +62,11 @@ $env:TMP = $env:TEMP
 New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
 $env:HACHIMI_DESKTOP_E2E_PREBUILT = "1"
 $env:HACHIMI_DESKTOP_E2E_GREP = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($GrepBase64))
+$env:HACHIMI_DESKTOP_E2E_PROFILE = $DesktopProfile
 Set-Location -LiteralPath $RepositoryRoot
 Write-Output "Desktop E2E identity: standard user; administrator=false"
 Write-Output "Desktop E2E selection: $env:HACHIMI_DESKTOP_E2E_GREP"
+Write-Output "Desktop E2E profile: $env:HACHIMI_DESKTOP_E2E_PROFILE"
 & $NodeExecutable "scripts/desktop-e2e/run.mjs"
 exit $LASTEXITCODE
 '@ | Set-Content -LiteralPath $innerScript -Encoding UTF8
@@ -72,7 +76,7 @@ exit $LASTEXITCODE
     $process = Start-Process -FilePath $powerShell -Credential $credential -LoadUserProfile `
         -ArgumentList @("-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
             "-File", $innerScript, "-RepositoryRoot", $repositoryRoot,
-            "-NodeExecutable", $nodeExecutable, "-WorkRoot", $workRoot, "-GrepBase64", $grepBase64) `
+            "-NodeExecutable", $nodeExecutable, "-WorkRoot", $workRoot, "-GrepBase64", $grepBase64, "-DesktopProfile", $desktopProfile) `
         -WorkingDirectory $repositoryRoot -WindowStyle Hidden `
         -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -Wait -PassThru
     if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath }
