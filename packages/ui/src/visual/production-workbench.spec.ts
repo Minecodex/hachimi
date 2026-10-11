@@ -1677,7 +1677,7 @@ test("appearance save failures roll the preview back to the confirmed settings",
   await expect(page.getByText("保存失败，已回滚", { exact: true })).toBeVisible();
 });
 
-test("model, voice, and pet settings use their live command-backed controls", async ({ page }) => {
+test("model and voice settings use their live command-backed controls", async ({ page }) => {
   test.setTimeout(90_000);
   await installTauriMocks(page);
   await installMotionLabAssets(page);
@@ -1714,6 +1714,14 @@ test("model, voice, and pet settings use their live command-backed controls", as
   await voiceInspection.locator('[data-component="switch-root"]').click();
   await voiceInspection.getByRole("button", { name: "确认导入" }).click();
   await expect(page.getByText("Melo 中英女声", { exact: true })).toBeVisible();
+});
+
+test("avatar settings inspect and import through live command-backed controls", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await installTauriMocks(page);
+  await installMotionLabAssets(page);
 
   await page.goto("http://127.0.0.1:1420/workbench.html?route=settings/avatar");
   await expect(page.getByText("Mimi", { exact: true })).toBeVisible();
@@ -1726,6 +1734,12 @@ test("model, voice, and pet settings use their live command-backed controls", as
   await inspection.getByRole("button", { name: "确认导入" }).click({ force: true });
   await expect(page.getByText("Luna", { exact: true })).toBeVisible();
   await expect(page.locator(".avatar-card-preview canvas")).toHaveCount(2);
+});
+
+test("motion settings import and delete through live command-backed controls", async ({ page }) => {
+  test.setTimeout(90_000);
+  await installTauriMocks(page);
+  await installMotionLabAssets(page);
 
   await page.goto("http://127.0.0.1:1420/workbench.html?route=settings/motion");
   await expect(page.getByRole("heading", { name: "交互" })).toBeVisible();
