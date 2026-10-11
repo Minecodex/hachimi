@@ -845,103 +845,121 @@ fn main() {
     }));
     let result = builder
         .plugin(tauri_plugin_notification::init())
-        .register_uri_scheme_protocol("hachimi-avatar", |context, request| {
-            if !matches!(context.webview_label(), "pet" | "workbench")
-                || request.method() != tauri::http::Method::GET
-            {
-                return avatar_protocol_response(
-                    tauri::http::StatusCode::FORBIDDEN,
-                    "text/plain; charset=utf-8",
-                    b"forbidden".to_vec(),
-                );
-            }
-            let entry_id = request.uri().path().trim_matches('/');
-            if entry_id.is_empty()
-                || entry_id.len() > 64
-                || !entry_id
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            {
-                return avatar_protocol_response(
-                    tauri::http::StatusCode::BAD_REQUEST,
-                    "text/plain; charset=utf-8",
-                    b"invalid avatar id".to_vec(),
-                );
-            }
-            let Some(state) = context.app_handle().try_state::<DesktopState>() else {
-                return avatar_protocol_response(
-                    tauri::http::StatusCode::SERVICE_UNAVAILABLE,
-                    "text/plain; charset=utf-8",
-                    b"avatar runtime is starting".to_vec(),
-                );
-            };
-            let asset = if context.webview_label() == "workbench" {
-                state.avatar_catalog.read().asset_for(entry_id)
-            } else {
-                state.avatar_catalog.read().current_asset_for(entry_id)
-            };
-            match asset.and_then(|asset| std::fs::read(asset.path).ok()) {
-                Some(bytes) => avatar_protocol_response(
-                    tauri::http::StatusCode::OK,
-                    "model/gltf-binary",
-                    bytes,
-                ),
-                None => avatar_protocol_response(
-                    tauri::http::StatusCode::NOT_FOUND,
-                    "text/plain; charset=utf-8",
-                    b"avatar not found".to_vec(),
-                ),
-            }
+        .register_asynchronous_uri_scheme_protocol("hachimi-avatar", |context, request, responder| {
+            let app = context.app_handle().clone();
+            let webview_label = context.webview_label().to_owned();
+            // Catalog and filesystem work must not block the WebView dispatch thread.
+            tauri::async_runtime::spawn_blocking(move || {
+                let response = (|| {
+                    if !matches!(webview_label.as_str(), "pet" | "workbench")
+                        || request.method() != tauri::http::Method::GET
+                    {
+                        return avatar_protocol_response(
+                            tauri::http::StatusCode::FORBIDDEN,
+                            "text/plain; charset=utf-8",
+                            b"forbidden".to_vec(),
+                        );
+                    }
+                    let entry_id = request.uri().path().trim_matches('/');
+                    if entry_id.is_empty()
+                        || entry_id.len() > 64
+                        || !entry_id
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                    {
+                        return avatar_protocol_response(
+                            tauri::http::StatusCode::BAD_REQUEST,
+                            "text/plain; charset=utf-8",
+                            b"invalid avatar id".to_vec(),
+                        );
+                    }
+                    let Some(state) = app.try_state::<DesktopState>() else {
+                        return avatar_protocol_response(
+                            tauri::http::StatusCode::SERVICE_UNAVAILABLE,
+                            "text/plain; charset=utf-8",
+                            b"avatar runtime is starting".to_vec(),
+                        );
+                    };
+                    let asset = if webview_label.as_str() == "workbench" {
+                        state.avatar_catalog.read().asset_for(entry_id)
+                    } else {
+                        state.avatar_catalog.read().current_asset_for(entry_id)
+                    };
+                    match asset.and_then(|asset| std::fs::read(asset.path).ok()) {
+                        Some(bytes) => avatar_protocol_response(
+                            tauri::http::StatusCode::OK,
+                            "model/gltf-binary",
+                            bytes,
+                        ),
+                        None => avatar_protocol_response(
+                            tauri::http::StatusCode::NOT_FOUND,
+                            "text/plain; charset=utf-8",
+                            b"avatar not found".to_vec(),
+                        ),
+                    }
+
+                })();
+                responder.respond(response);
+            });
         })
-        .register_uri_scheme_protocol("hachimi-motion", |context, request| {
-            if !matches!(context.webview_label(), "pet" | "workbench")
-                || request.method() != tauri::http::Method::GET
-            {
-                return avatar_protocol_response(
-                    tauri::http::StatusCode::FORBIDDEN,
-                    "text/plain; charset=utf-8",
-                    b"forbidden".to_vec(),
-                );
-            }
-            let id = request.uri().path().trim_matches('/');
-            if id.is_empty()
-                || id.len() > 128
-                || !id.bytes().all(|byte| {
-                    byte.is_ascii_lowercase()
-                        || byte.is_ascii_digit()
-                        || matches!(byte, b'.' | b'_' | b'-')
-                })
-            {
-                return avatar_protocol_response(
-                    tauri::http::StatusCode::BAD_REQUEST,
-                    "text/plain; charset=utf-8",
-                    b"invalid motion id".to_vec(),
-                );
-            }
-            let Some(state) = context.app_handle().try_state::<DesktopState>() else {
-                return avatar_protocol_response(
-                    tauri::http::StatusCode::SERVICE_UNAVAILABLE,
-                    "text/plain; charset=utf-8",
-                    b"motion runtime is starting".to_vec(),
-                );
-            };
-            match state
-                .motion_catalog
-                .read()
-                .asset_for(id)
-                .and_then(|asset| std::fs::read(asset.path).ok())
-            {
-                Some(bytes) => avatar_protocol_response(
-                    tauri::http::StatusCode::OK,
-                    "model/gltf-binary",
-                    bytes,
-                ),
-                None => avatar_protocol_response(
-                    tauri::http::StatusCode::NOT_FOUND,
-                    "text/plain; charset=utf-8",
-                    b"motion asset not found".to_vec(),
-                ),
-            }
+        .register_asynchronous_uri_scheme_protocol("hachimi-motion", |context, request, responder| {
+            let app = context.app_handle().clone();
+            let webview_label = context.webview_label().to_owned();
+            // Catalog and filesystem work must not block the WebView dispatch thread.
+            tauri::async_runtime::spawn_blocking(move || {
+                let response = (|| {
+                    if !matches!(webview_label.as_str(), "pet" | "workbench")
+                        || request.method() != tauri::http::Method::GET
+                    {
+                        return avatar_protocol_response(
+                            tauri::http::StatusCode::FORBIDDEN,
+                            "text/plain; charset=utf-8",
+                            b"forbidden".to_vec(),
+                        );
+                    }
+                    let id = request.uri().path().trim_matches('/');
+                    if id.is_empty()
+                        || id.len() > 128
+                        || !id.bytes().all(|byte| {
+                            byte.is_ascii_lowercase()
+                                || byte.is_ascii_digit()
+                                || matches!(byte, b'.' | b'_' | b'-')
+                        })
+                    {
+                        return avatar_protocol_response(
+                            tauri::http::StatusCode::BAD_REQUEST,
+                            "text/plain; charset=utf-8",
+                            b"invalid motion id".to_vec(),
+                        );
+                    }
+                    let Some(state) = app.try_state::<DesktopState>() else {
+                        return avatar_protocol_response(
+                            tauri::http::StatusCode::SERVICE_UNAVAILABLE,
+                            "text/plain; charset=utf-8",
+                            b"motion runtime is starting".to_vec(),
+                        );
+                    };
+                    match state
+                        .motion_catalog
+                        .read()
+                        .asset_for(id)
+                        .and_then(|asset| std::fs::read(asset.path).ok())
+                    {
+                        Some(bytes) => avatar_protocol_response(
+                            tauri::http::StatusCode::OK,
+                            "model/gltf-binary",
+                            bytes,
+                        ),
+                        None => avatar_protocol_response(
+                            tauri::http::StatusCode::NOT_FOUND,
+                            "text/plain; charset=utf-8",
+                            b"motion asset not found".to_vec(),
+                        ),
+                    }
+
+                })();
+                responder.respond(response);
+            });
         })
         .register_uri_scheme_protocol("hachimi-plugin-asset", plugin_content_protocol::asset_protocol)
         .register_uri_scheme_protocol("hachimi-plugin-ui", plugin_content_protocol::ui_protocol)

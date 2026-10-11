@@ -301,11 +301,7 @@ export function ProjectSidebar(props: {
           </Button>
         </Show>
         <Show when={props.motionLabEnabled}>
-          <Button
-            type="button"
-            data-testid="motion-lab-open"
-            onClick={() => props.openMotionLab()}
-          >
+          <Button type="button" data-testid="motion-lab-open" onClick={() => props.openMotionLab()}>
             <Play size={17} />
             <span>{i18n.locale() === "zh-CN" ? "动作库实验室" : "Motion Library Lab"}</span>
           </Button>

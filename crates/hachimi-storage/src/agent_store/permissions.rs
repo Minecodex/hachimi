@@ -16,7 +16,7 @@ impl AgentStore {
             .run_id
             .as_ref()
             .ok_or(AgentStoreError::RunPreconditionFailed)?;
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let run = get_run_tx(&mut transaction, run_id)
             .await?
             .ok_or_else(|| AgentStoreError::RunNotFound(run_id.clone()))?;

@@ -254,7 +254,7 @@ mod tests {
         };
         let mut output = Vec::new();
         run_search_server(
-            &context(directory.path()),
+            &context(crate::test_support::fixture_root(&directory)),
             &request,
             DelayedInput {
                 inner: Cursor::new(b"{\"type\":\"cancel\"}\n".to_vec()),

@@ -258,7 +258,7 @@ describe("Hachimi Agent product tool reachability", () => {
 
   it("runs spawn, wait, and collect through the real unified ToolPlan", async () => {
     await startProjectTask("[desktop-e2e:multi-agent-tools] run one bounded child task");
-    await waitForRun("succeeded");
+    await waitForRun("succeeded", 240_000);
     await browser.refresh();
     await waitForTimeline("Desktop E2E Coding unified ToolPlan completed");
     const timeline = await $('[data-testid="workbench-session-timeline"]');

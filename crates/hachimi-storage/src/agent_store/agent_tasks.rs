@@ -25,7 +25,7 @@ impl AgentStore {
         task_id: &AgentTaskId,
         item_id: &ItemId,
     ) -> Result<(), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query("SELECT relations_json FROM transcript_items WHERE id = ? AND kind = 'collab_tool_call'")
             .bind(item_id.as_str())
             .fetch_optional(&mut *transaction)
@@ -65,7 +65,7 @@ impl AgentStore {
         {
             return Err(AgentStoreError::AgentTaskLimitExceeded);
         }
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let direct_children: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks WHERE parent_run_id = ?")
                 .bind(task.parent_run_id.as_str())
@@ -235,7 +235,7 @@ impl AgentStore {
             return Err(AgentStoreError::InvalidAgentTaskTransition);
         }
         let lease_expires_at_ms = now_ms.saturating_add(lease_duration_ms);
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let changed = sqlx::query(
             "UPDATE agent_tasks SET execution_generation = execution_generation + 1, lease_owner = ?, lease_expires_at_ms = ?, last_reconciled_at_ms = ?, updated_at_ms = MAX(updated_at_ms, ?) WHERE id = ? AND status IN ('queued', 'running', 'waiting') AND (lease_owner IS NULL OR lease_expires_at_ms IS NULL OR lease_expires_at_ms <= ?)",
         )
@@ -450,7 +450,7 @@ impl AgentStore {
         &self,
         task: &AgentTaskRecord,
     ) -> Result<(), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let Some(row) = sqlx::query(
             "SELECT transcript_items.* FROM transcript_items JOIN agent_task_transcript_items ON agent_task_transcript_items.item_id = transcript_items.id WHERE agent_task_transcript_items.agent_task_id = ?",
         )

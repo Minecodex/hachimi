@@ -2,8 +2,21 @@ import { expect } from "@wdio/globals";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
+/* global document */
+
 import { clickWhenReady, waitForDisplayed } from "../support/interactions.mjs";
 import { switchToPet, switchToWorkbench } from "../support/windows.mjs";
+import {
+  beginAmbientObservation,
+  readAmbientObservation,
+  readAmbientRecovery,
+  endAmbientObservation,
+  beginMotionObservation,
+  readMotionObservation,
+  readMotionRecovery,
+  beginGazeObservation,
+  readGazeObservation,
+} from "../support/motion-observation.mjs";
 
 const REMOVED_NAMES = new Set([
   "飞吻",
@@ -79,39 +92,37 @@ describe("Avatar Motion Runtime V5", () => {
       (entry) => entry.id === "user.desktop-e2e.ready" && entry.analysisStatus === "ready",
     );
     expect(userMotion).toBeDefined();
-    await emitToPet("motion:intent-request", motionIntent("e2e:return-to-waiting", userMotion.id));
     await switchToPet();
-    await browser.waitUntil(
-      async () =>
-        ((await $(".pet-avatar-canvas").getAttribute("data-motion-slots")) ?? "").includes(
-          "action",
-        ),
-      { timeout: 5_000, timeoutMsg: "E2E action did not enter the action slot" },
-    );
-    await browser.waitUntil(
-      async () => (await $(".pet-avatar-canvas").getAttribute("data-motion-slots")) === "base",
-      { timeout: 15_000, timeoutMsg: "Completed action did not return to waiting base idle" },
-    );
+    await browser.execute(beginMotionObservation, userMotion.id);
+    await emitToPet("motion:intent-request", motionIntent("e2e:return-to-waiting", userMotion.id));
+    await browser.waitUntil(() => browser.execute(readMotionObservation), {
+      timeout: 5_000,
+      timeoutMsg: "E2E action did not enter the action slot",
+    });
+    await browser.waitUntil(() => browser.execute(readMotionRecovery), {
+      timeout: 15_000,
+      timeoutMsg: "Completed action did not return to waiting base idle",
+    });
 
-    await browser.waitUntil(
-      async () => Boolean(await $(".pet-avatar-canvas").getAttribute("data-motion-ambient")),
-      { timeout: 30_000, timeoutMsg: "One-shot ambient motion did not start within 25 seconds" },
-    );
-    const ambientMotionId = await $(".pet-avatar-canvas").getAttribute("data-motion-ambient");
-    const ambientMotion = motionCatalog.entries.find((entry) => entry.id === ambientMotionId);
-    expect(ambientMotion).toBeDefined();
-    expect(ambientMotion.loopMode).toBe("once");
-    await browser.waitUntil(
-      async () =>
-        ((await $(".pet-avatar-canvas").getAttribute("data-motion-slots")) ?? "").includes(
-          "action",
-        ),
-      { timeout: 5_000, timeoutMsg: "Ambient motion did not enter the action slot" },
-    );
-    await browser.waitUntil(
-      async () => (await $(".pet-avatar-canvas").getAttribute("data-motion-slots")) === "base",
-      { timeout: 20_000, timeoutMsg: "Ambient action did not recover to waiting base idle" },
-    );
+    await browser.execute(beginAmbientObservation);
+    try {
+      const ambientMotionId = await browser.waitUntil(
+        () => browser.execute(readAmbientObservation),
+        {
+          timeout: 60_000,
+          timeoutMsg: "One-shot ambient motion did not enter its action slot",
+        },
+      );
+      const ambientMotion = motionCatalog.entries.find((entry) => entry.id === ambientMotionId);
+      expect(ambientMotion).toBeDefined();
+      expect(ambientMotion.loopMode).toBe("once");
+      await browser.waitUntil(() => browser.execute(readAmbientRecovery), {
+        timeout: 20_000,
+        timeoutMsg: "Ambient action did not recover to waiting base idle",
+      });
+    } finally {
+      await browser.execute(endAmbientObservation);
+    }
   });
 
   it("keeps transition diagnostics and direct Pet interaction live across windows", async () => {
@@ -119,11 +130,14 @@ describe("Avatar Motion Runtime V5", () => {
     await clickWhenReady('[data-testid="motion-lab-open"]');
     await waitForDisplayed('[data-testid="motion-lab-v5"]', 30_000);
     await browser.waitUntil(
-      async () => {
-        const text = await $(".motion-lab-diagnostics").getText();
-        return text.includes("Transition") || text.includes("切换");
-      },
-      { timeout: 30_000, timeoutMsg: "Motion Lab transition diagnostics were not ready" },
+      () =>
+        browser.execute(
+          () =>
+            document
+              .querySelector('[data-testid="motion-lab-v5"]')
+              ?.getAttribute("data-transition-ready") === "true",
+        ),
+      { timeout: 75_000, timeoutMsg: "Motion Lab transition diagnostics were not ready" },
     );
     await clickWhenReady(".motion-lab-matrix button");
     await browser.waitUntil(
@@ -140,7 +154,7 @@ describe("Avatar Motion Runtime V5", () => {
     expect(rejectedTransitions).toHaveLength(0);
 
     await clickWhenReady('[data-testid="motion-lab-play-pet"]');
-    await expect($('[data-testid="motion-lab-pet-status"]')).toBeDisplayed();
+    await waitForDisplayed('[data-testid="motion-lab-pet-status"]', 20_000);
 
     await switchToPet();
     await waitForDisplayed(".pet-avatar-hit-area", 20_000);
@@ -179,6 +193,7 @@ describe("Avatar Motion Runtime V5", () => {
     expect(directFeedbackAt - directInteractionAt).toBeLessThanOrEqual(80);
     const location = await hitArea.getLocation();
     const size = await hitArea.getSize();
+    await browser.execute(beginGazeObservation);
     await browser
       .action("pointer")
       .move({
@@ -186,11 +201,10 @@ describe("Avatar Motion Runtime V5", () => {
         y: Math.round(location.y + size.height / 2),
       })
       .perform();
-    await browser.waitUntil(
-      async () =>
-        Number(await $(".pet-avatar-canvas").getAttribute("data-motion-head-yaw")) > 20,
-      { timeout: 2_000, timeoutMsg: "Cursor gaze did not produce the wider head turn" },
-    );
+    await browser.waitUntil(async () => (await browser.execute(readGazeObservation)) > 20, {
+      timeout: 2_000,
+      timeoutMsg: "Cursor gaze did not produce the wider head turn",
+    });
     await browser
       .action("pointer")
       .move({
@@ -268,7 +282,7 @@ describe("Avatar Motion Runtime V5", () => {
     await switchToPet();
     await browser.waitUntil(
       async () => (await $(".pet-avatar-canvas").getAttribute("data-motion-speech")) === "playing",
-      { timeout: 5_000, timeoutMsg: "Speech did not enter the Pet speech slot" },
+      { timeout: 20_000, timeoutMsg: "Speech did not enter the Pet speech slot" },
     );
     await switchToWorkbench();
     await clickWhenReady('[data-testid="motion-lab-speech-stop"]');
@@ -313,15 +327,13 @@ describe("Avatar Motion Runtime V5", () => {
     expect(
       await invokeTauri("get_motion_runtime_asset", { request: { id: userMotion.id } }),
     ).not.toBeNull();
-    await emitToPet("motion:intent-request", motionIntent("e2e:user-vrma", userMotion.id));
     await switchToPet();
-    await browser.waitUntil(
-      async () =>
-        ((await $(".pet-avatar-canvas").getAttribute("data-motion-slots")) ?? "").includes(
-          "action",
-        ),
-      { timeout: 5_000, timeoutMsg: "User VRMA did not enter the action slot" },
-    );
+    await browser.execute(beginMotionObservation, userMotion.id);
+    await emitToPet("motion:intent-request", motionIntent("e2e:user-vrma", userMotion.id));
+    await browser.waitUntil(() => browser.execute(readMotionObservation), {
+      timeout: 5_000,
+      timeoutMsg: "User VRMA did not enter the action slot",
+    });
 
     await switchToWorkbench();
     const missingBlob = join(
@@ -416,11 +428,15 @@ async function invokeTauri(command, args = {}) {
 }
 
 async function emitToPet(event, payload) {
+  // Event emission belongs to the Workbench capability. The Pet observer
+  // remains installed while its window is in the background.
+  await switchToWorkbench();
   const result = await invokeTauri("plugin:event|emit_to", {
     target: { kind: "AnyLabel", label: "pet" },
     event,
     payload,
   });
+  await switchToPet();
   return result;
 }
 

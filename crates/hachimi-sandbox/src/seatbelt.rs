@@ -16,10 +16,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use hachimi_protocol::{CapabilityGrantSet, FileSystemAccess};
+#[cfg(target_os = "macos")]
+use hachimi_protocol::CapabilityGrantSet;
+use hachimi_protocol::FileSystemAccess;
 
 use crate::process_backend::{SandboxError, SandboxLaunchSpec};
 
+#[cfg(target_os = "macos")]
 pub(crate) const SEATBELT_EXECUTABLE: &str = "/usr/bin/sandbox-exec";
 
 pub(crate) const BASE_POLICY: &str = include_str!("seatbelt_base_policy.sbpl");
@@ -33,6 +36,7 @@ const NETWORK_POLICY: &str = "(deny network*)\n";
 /// checkout cwd (read/write with a read-only `.git`), the Run temporary
 /// directory from the environment, the toolchain read paths from the base
 /// policy, and deny-all networking.
+#[cfg(target_os = "macos")]
 pub fn seatbelt_terminal_args(
     command: &[String],
     cwd: &Path,

@@ -88,7 +88,7 @@ impl AgentStore {
             attachment_ids,
             binding,
         } = input;
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if let Some(existing_id) = sqlx::query_scalar::<_, String>(
             "SELECT resource_id FROM idempotency_records WHERE principal = ? AND method = 'run.start' AND idempotency_key = ?",
         )
@@ -442,7 +442,7 @@ impl AgentStore {
         launch: Option<AtomicRunLaunchInput<'_>>,
         revised_plan: Option<(&PlanId, u32)>,
     ) -> Result<CreatedAgentRun, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let idempotency_method = if revised_plan.is_some() {
             "plan.revise"
         } else {
@@ -740,7 +740,7 @@ impl AgentStore {
         attachment_ids: &[AttachmentId],
         launch: Option<AtomicRunLaunchInput<'_>>,
     ) -> Result<CreatedAgentRun, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if let Some(existing_id) = sqlx::query_scalar::<_, String>(
             "SELECT resource_id FROM idempotency_records WHERE principal = ? AND method = 'run.start' AND idempotency_key = ?",
         )

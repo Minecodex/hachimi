@@ -16,7 +16,10 @@ use tokio_util::sync::CancellationToken;
 use crate::AgentInstructionLayer;
 
 pub const DEFAULT_AGENTS_MD_BUDGET: usize = 32 * 1024;
-const READ_TIMEOUT: Duration = Duration::from_secs(10);
+// A read launches an isolated Workspace worker before accessing the file.
+// Include Windows cold-process startup without converting an error into an
+// empty instruction snapshot; cancellation and the byte limit remain strict.
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const AGENTS_FILE: &str = "AGENTS.md";
 const OVERRIDE_FILE: &str = "AGENTS.override.md";
 

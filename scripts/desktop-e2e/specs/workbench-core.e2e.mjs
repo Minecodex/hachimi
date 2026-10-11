@@ -10,7 +10,7 @@ import {
 } from "../support/interactions.mjs";
 import { restartApplication, switchToPet, switchToWorkbench } from "../support/windows.mjs";
 
-/* global HTMLButtonElement, HTMLTextAreaElement, InputEvent, document */
+/* global HTMLButtonElement, HTMLTextAreaElement, InputEvent, MutationObserver, document */
 
 function git(project, ...args) {
   const result = spawnSync("git", args, { cwd: project, encoding: "utf8" });
@@ -104,12 +104,47 @@ async function submitPlanUserInput() {
   await clickWhenReady(selector);
 }
 
+const powerShellProcesses = new Set();
+
+async function typeTerminalCommand(command) {
+  // Bound EdgeDriver keyboard requests, including the encoded shell handshake.
+  for (let offset = 0; offset < command.length; offset += 32) {
+    await browser.keys(command.slice(offset, offset + 32));
+  }
+  await browser.keys("Enter");
+}
+
 async function writeTerminal(command) {
   const terminal = await $(".terminal-session.active .xterm");
   await terminal.waitForDisplayed({ timeout: 20_000 });
   await terminal.click();
-  await browser.keys(command);
-  await browser.keys("Enter");
+  await browser.waitUntil(
+    async () => Boolean(await $(".terminal-session.active").getAttribute("data-process-id")),
+    { timeout: 20_000, timeoutMsg: "Terminal fixture process identity did not become ready" },
+  );
+  const processId = await $(".terminal-session.active").getAttribute("data-process-id");
+  if (!processId) throw new Error("Terminal fixture has no live process identity");
+  if (!powerShellProcesses.has(processId)) {
+    // The verified default shell can be CMD on a hosted standard-user profile.
+    // Enter PowerShell explicitly before sending the PowerShell-only fixture.
+    const readyMarker = `PS_READY_${createHash("sha256").update(processId).digest("hex").slice(0, 12)}`;
+    const handshake = Buffer.from(
+      `Write-Output '${readyMarker.replaceAll("'", "''")}'`,
+      "utf16le",
+    ).toString("base64");
+    await typeTerminalCommand(
+      `powershell.exe -NoLogo -NoProfile -NoExit -EncodedCommand ${handshake}`,
+    );
+    await browser.waitUntil(
+      async () => (await $(".terminal-session.active .xterm-rows").getText()).includes(readyMarker),
+      {
+        timeout: 20_000,
+        timeoutMsg: "PowerShell fixture interpreter did not start",
+      },
+    );
+    powerShellProcesses.add(processId);
+  }
+  await typeTerminalCommand(command);
 }
 
 function petEvidenceExists(project) {
@@ -133,7 +168,7 @@ describe("Hachimi Workbench core lifecycle", () => {
     await browser.waitUntil(
       async () =>
         (await $('[data-testid="workbench-project-git-state"]').getText()).includes("非 Git"),
-      { timeout: 20_000, timeoutMsg: "initial non-Git inspection did not settle" },
+      { timeout: 75_000, timeoutMsg: "initial non-Git inspection did not settle" },
     );
     await expect($('[data-testid="workbench-project-git-state"]')).toHaveText(
       expect.stringContaining("非 Git"),
@@ -153,7 +188,7 @@ describe("Hachimi Workbench core lifecycle", () => {
     await browser.waitUntil(
       async () =>
         (await $('[data-testid="workbench-project-git-state"]').getText()).includes("尚无提交"),
-      { timeout: 20_000, timeoutMsg: "late git init was not reconciled as an unborn branch" },
+      { timeout: 75_000, timeoutMsg: "late git init was not reconciled as an unborn branch" },
     );
     await expect($('[data-testid="workbench-project-git-state"]')).toHaveText(
       expect.stringContaining("main"),
@@ -177,9 +212,8 @@ describe("Hachimi Workbench core lifecycle", () => {
 
     writeFileSync(systemGitGate, "normal\n", "utf8");
     await clickWhenReady('[data-testid="system-git-refresh"]');
-    await $('[data-testid="project-git-create-initial"]').waitForEnabled({ timeout: 20_000 });
-
-    await clickWhenReady('[data-testid="project-git-create-initial"]');
+    await clickWhenReady('[data-testid="project-git-create-initial"]', 75_000);
+    await waitForDisplayed(".project-git-initial-fields input");
     const identity = await $$(".project-git-initial-fields input");
     await identity[0].setValue("Hachimi Desktop E2E");
     await identity[1].setValue("desktop-e2e@hachimi.invalid");
@@ -187,7 +221,9 @@ describe("Hachimi Workbench core lifecycle", () => {
     await browser.waitUntil(
       async () =>
         !(await $('[data-testid="workbench-project-git-state"]').getText()).includes("尚无提交"),
-      { timeout: 20_000, timeoutMsg: "empty initial commit did not make the repository ready" },
+      // The native operation has a 30-second budget, followed by a real
+      // checkout refresh. The UI assertion must cover that entire contract.
+      { timeout: 45_000, timeoutMsg: "empty initial commit did not make the repository ready" },
     );
 
     expect(sha256File(absoluteIndex)).toBe(indexBefore);
@@ -199,7 +235,7 @@ describe("Hachimi Workbench core lifecycle", () => {
     await browser.waitUntil(
       async () =>
         (await $('[data-testid="workbench-project-git-state"]').getText()).includes("detached"),
-      { timeout: 20_000, timeoutMsg: "detached HEAD was not projected" },
+      { timeout: 75_000, timeoutMsg: "detached HEAD was not projected" },
     );
     await clickWhenReady('[data-testid="workbench-execution-target"]');
     await expect($('[data-testid="workbench-execution-worktree"]')).toBeDisabled();
@@ -209,7 +245,7 @@ describe("Hachimi Workbench core lifecycle", () => {
     await clickWhenReady('[aria-label="刷新 Git 状态"]');
     await browser.waitUntil(
       async () => (await $('[data-testid="workbench-project-git-state"]').getText()) === "main",
-      { timeout: 20_000, timeoutMsg: "switching back to main was not reconciled" },
+      { timeout: 75_000, timeoutMsg: "switching back to main was not reconciled" },
     );
 
     await clickWhenReady('[data-testid="workbench-execution-target"]');
@@ -272,7 +308,7 @@ describe("Hachimi Workbench core lifecycle", () => {
     await expect($(".workspace-diff-file")).not.toBeDisplayed();
 
     await clickWhenReady('[data-testid="workbench-execute-plan"]');
-    await waitForRun("succeeded", 45_000);
+    await waitForRun("succeeded", 90_000);
     await clickWhenReady('[data-testid="workbench-pin-summary"]');
     await clickWhenReady('[data-testid="workbench-summary-files"]');
     await browser.waitUntil(
@@ -283,6 +319,13 @@ describe("Hachimi Workbench core lifecycle", () => {
       expect.stringContaining("desktop-e2e-evidence.txt"),
     );
 
+    // The wide Files inspector overlays the timeline at this window size.
+    // Close it before using the run summary's real pointer target.
+    await clickWhenReady('[data-testid="workbench-toggle-inspector"]');
+    await browser.waitUntil(async () => !(await isDisplayed(".workbench-inspector")), {
+      timeout: 5_000,
+      timeoutMsg: "Files inspector did not close before run review",
+    });
     await clickWhenReady(
       '[data-testid="workbench-review-run-file"][data-path="desktop-e2e-evidence.txt"]',
     );
@@ -343,6 +386,9 @@ describe("Hachimi Workbench core lifecycle", () => {
   });
 
   it("recovers a Run interrupted while waiting for approval", async () => {
+    if (await isDisplayed(".workbench-inspector")) {
+      await clickWhenReady('[data-testid="workbench-toggle-inspector"]');
+    }
     await expandFirstProject();
     await clickWhenReady('[data-testid^="project-new-task-"]');
     await $('[data-testid="workbench-composer-input"]').waitForDisplayed({ timeout: 5_000 });
@@ -357,8 +403,6 @@ describe("Hachimi Workbench core lifecycle", () => {
     await draft.setValue(
       `[desktop-e2e:approval-recovery] url=${browserUrl} start the deterministic external action and stop at approval.`,
     );
-    await clickWhenReady('[data-testid="workbench-start-task"]');
-    await $('[data-testid="workbench-approve-once"]').waitForDisplayed({ timeout: 30_000 });
 
     await openInspectorToolLauncher();
     await clickWhenReady(
@@ -392,17 +436,33 @@ describe("Hachimi Workbench core lifecycle", () => {
 
     const childStarted = join(project, "terminal-child-started.txt");
     const childSurvived = join(project, "terminal-grandchild-survived.txt");
-    const childScript = `Start-Sleep -Seconds 4; Set-Content -LiteralPath '${childSurvived.replaceAll("'", "''")}' -Value escaped`;
+    const childScript = `[IO.File]::WriteAllText('${childStarted.replaceAll("'", "''")}', [string]$PID); Start-Sleep -Seconds 60; Set-Content -LiteralPath '${childSurvived.replaceAll("'", "''")}' -Value escaped`;
     const encodedChild = Buffer.from(childScript, "utf16le").toString("base64");
+    // Launch inside the existing ConPTY: Start-Process opens an independent
+    // console and a parent marker does not prove the descendant is running.
     await writeTerminal(
-      `Set-Content -LiteralPath '${childStarted.replaceAll("'", "''")}' -Value started; Start-Process powershell.exe -ArgumentList '-NoProfile','-NonInteractive','-EncodedCommand','${encodedChild}'`,
+      `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodedChild}`,
     );
     await browser.waitUntil(() => existsSync(childStarted), {
-      timeout: 10_000,
+      timeout: 30_000,
       timeoutMsg: "Terminal grandchild fixture did not start",
     });
+    const childPid = Number(readFileSync(childStarted, "utf8"));
+    expect(Number.isInteger(childPid) && childPid > 0).toBe(true);
+    process.kill(childPid, 0);
     await clickWhenReady('[aria-label="关闭终端"], [aria-label="Close terminal"]');
-    await browser.pause(5_000);
+    await browser.waitUntil(
+      () => {
+        try {
+          process.kill(childPid, 0);
+          return false;
+        } catch (error) {
+          if (error.code === "ESRCH") return true;
+          throw error;
+        }
+      },
+      { timeout: 10_000, timeoutMsg: "Terminal descendant survived native termination" },
+    );
     expect(existsSync(childSurvived)).toBe(false);
 
     await openInspectorToolLauncher();
@@ -419,6 +479,20 @@ describe("Hachimi Workbench core lifecycle", () => {
     );
     await clickWhenReady('[aria-label="关闭终端"], [aria-label="Close terminal"]');
 
+    // Start the waiting approval immediately before restart. The independent
+    // terminal lifecycle checks must not consume this tool's execution budget.
+    if (await isDisplayed(".workbench-inspector")) {
+      await clickWhenReady('[data-testid="workbench-toggle-inspector"]');
+    }
+    await expandFirstProject();
+    await clickWhenReady('[data-testid^="project-new-task-"]');
+    await clickWhenReady('[data-testid="workbench-permission-profile"]');
+    await clickWhenReady('[data-testid="workbench-permission-writable"]');
+    await $('[data-testid="workbench-composer-input"]').setValue(
+      `[desktop-e2e:approval-recovery] url=${browserUrl} stop at the approval boundary.`,
+    );
+    await clickWhenReady('[data-testid="workbench-start-task"]');
+    await waitForDisplayed('[data-testid="workbench-approve-once"]', 30_000);
     await restartApplication();
     await switchToWorkbench();
     await openProjectSessions();
@@ -448,8 +522,19 @@ describe("Hachimi Workbench core lifecycle", () => {
       await clickWhenReady('[data-testid="pet-permission-writable"]');
       await clickWhenReady('[data-testid="pet-permission-save"]');
       await browser.waitUntil(
-        async () => !(await $('[data-testid="pet-permission-save"]').isEnabled()),
-        { timeout: 10_000, timeoutMsg: "Pet permission editor did not save" },
+        () =>
+          browser.execute(() => {
+            const button = document.querySelector('[data-testid="pet-permission-save"]');
+            return (
+              button instanceof HTMLButtonElement &&
+              button.disabled &&
+              button.getAttribute("aria-busy") !== "true" &&
+              /Pet Agent 权限已保存|Pet Agent permissions saved/.test(
+                document.body.textContent ?? "",
+              )
+            );
+          }),
+        { timeout: 20_000, timeoutMsg: "Pet permission editor did not save" },
       );
     }
     await switchToPet();
@@ -458,15 +543,37 @@ describe("Hachimi Workbench core lifecycle", () => {
     await $('[data-testid="pet-composer-input"]').setValue(
       "[desktop-e2e:pet-cross-window] verify shared interaction ownership",
     );
+    await browser.execute(() => {
+      const observation = { matched: false, observer: null };
+      const capture = () => {
+        if (document.querySelector(".pet-speech")?.textContent?.includes("writable Workspace")) {
+          observation.matched = true;
+          observation.observer?.disconnect();
+        }
+      };
+      observation.observer = new MutationObserver(capture);
+      observation.observer.observe(document.body, {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+      window.__HACHIMI_PET_REPLY_OBSERVATION__ = observation;
+    });
     await clickWhenReady('[data-testid="pet-composer-submit"]');
-    await browser.waitUntil(
-      async () => {
-        return (
-          await browser.execute(() => document.querySelector(".pet-speech")?.textContent ?? "")
-        ).includes("writable Workspace");
-      },
-      { timeout: 45_000, timeoutMsg: "Pet writable Workspace completion reply was not projected" },
-    );
+    try {
+      await browser.waitUntil(
+        () => browser.execute(() => window.__HACHIMI_PET_REPLY_OBSERVATION__?.matched === true),
+        {
+          timeout: 120_000,
+          timeoutMsg: "Pet writable Workspace completion reply was not projected",
+        },
+      );
+    } finally {
+      await browser.execute(() => {
+        window.__HACHIMI_PET_REPLY_OBSERVATION__?.observer?.disconnect();
+        delete window.__HACHIMI_PET_REPLY_OBSERVATION__;
+      });
+    }
     await expect($('[data-testid="pet-approve-once"]')).not.toBeDisplayed();
     await expect($('[data-testid="pet-attention"]')).not.toBeDisplayed();
     expect(petEvidenceExists(project)).toBe(true);

@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { _setGlobal } from "@wdio/globals";
 import { remote } from "webdriverio";
 
+/* global document */
+
 import { cleanupExecutableProcesses } from "./processes.mjs";
+import { attachedWebviewCapabilities, launchAutomationApplication } from "./application.mjs";
 
 let restartSequence = 0;
 
@@ -15,7 +18,11 @@ export async function switchToWorkbench() {
         try {
           await browser.switchToWindow(handle);
           const [title, url] = await Promise.all([browser.getTitle(), browser.getUrl()]);
-          if (title.includes("Hachimi Workbench") || url.includes("/workbench.html")) return true;
+          const workbench = await browser.execute(() =>
+            Boolean(document.querySelector(".workbench-window")),
+          );
+          if (workbench || title.includes("Hachimi Workbench") || url.includes("/workbench.html"))
+            return true;
         } catch {
           // A startup WebView may disappear while the native app creates the
           // Workbench. The next poll only considers current handles.
@@ -66,22 +73,30 @@ export async function restartApplication() {
     // still required before asking tauri-driver for a replacement session.
   }
   cleanupExecutableProcesses(application);
+  const attachedApplication =
+    process.env.HACHIMI_DESKTOP_E2E_ATTACH === "1"
+      ? await launchAutomationApplication(application, webviewData)
+      : null;
   const replacement = await remote({
     hostname: "127.0.0.1",
     port: 4444,
     path: "/",
     logLevel: "warn",
     connectionRetryCount: 0,
-    capabilities: {
-      "tauri:options": {
-        application,
-        webviewOptions: {
-          // The application database remains under HACHIMI_DATA_DIR. A new
-          // browser-only profile avoids WebView2's short-lived Preferences lock.
-          userDataFolder: join(webviewData, `restart-${restartSequence}`),
+    capabilities: attachedApplication
+      ? attachedWebviewCapabilities(attachedApplication.debuggerAddress)
+      : {
+          "tauri:options": {
+            application,
+            webviewOptions: {
+              browserExecutableFolder: process.env.WEBVIEW2_BROWSER_EXECUTABLE_FOLDER,
+              additionalBrowserArguments: ["--remote-debugging-port=0"],
+              // The application database remains under HACHIMI_DATA_DIR. A new
+              // browser-only profile avoids WebView2's short-lived Preferences lock.
+              userDataFolder: join(webviewData, `restart-${restartSequence}`),
+            },
+          },
         },
-      },
-    },
   });
   _setGlobal("browser", replacement);
   _setGlobal("driver", replacement);

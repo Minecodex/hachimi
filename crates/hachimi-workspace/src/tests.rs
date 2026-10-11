@@ -37,7 +37,13 @@ fn workspace_root_rejections_have_stable_migration_codes() {
 async fn reads_replaces_and_rejects_stale_writes() {
     let directory = tempfile::tempdir().expect("directory");
     std::fs::write(directory.path().join("demo.txt"), "alpha\nbeta\n").expect("seed");
-    let context = WorkerContext::new(directory.path(), "checkout", 7, "token").expect("context");
+    let context = WorkerContext::new(
+        crate::test_support::fixture_root(&directory),
+        "checkout",
+        7,
+        "token",
+    )
+    .expect("context");
     let response = context
         .handle(request(WorkspaceOperation::ReadFile {
             path: "demo.txt".into(),
@@ -78,7 +84,13 @@ async fn apply_patch_preflights_every_target_before_committing() {
     let directory = tempfile::tempdir().expect("directory");
     std::fs::write(directory.path().join("move.txt"), "section\nold\n").expect("seed move");
     std::fs::write(directory.path().join("delete.txt"), "remove\n").expect("seed delete");
-    let context = WorkerContext::new(directory.path(), "checkout", 7, "token").expect("context");
+    let context = WorkerContext::new(
+        crate::test_support::fixture_root(&directory),
+        "checkout",
+        7,
+        "token",
+    )
+    .expect("context");
     let patch = "*** Begin Patch\n*** Add File: nested/new.txt\n+created\n*** Update File: move.txt\n*** Move to: moved.txt\n@@ section\n-old\n+new\n*** Delete File: delete.txt\n*** End Patch";
     let response = context
         .handle(request(WorkspaceOperation::ApplyPatch {
@@ -115,7 +127,13 @@ async fn apply_patch_preflights_every_target_before_committing() {
 #[tokio::test]
 async fn rejects_parent_traversal_and_stale_generation() {
     let directory = tempfile::tempdir().expect("directory");
-    let context = WorkerContext::new(directory.path(), "checkout", 7, "token").expect("context");
+    let context = WorkerContext::new(
+        crate::test_support::fixture_root(&directory),
+        "checkout",
+        7,
+        "token",
+    )
+    .expect("context");
     let traversal = context
         .handle(request(WorkspaceOperation::ReadFile {
             path: "../outside.txt".into(),

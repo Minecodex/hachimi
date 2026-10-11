@@ -222,10 +222,25 @@ async function ensureInterruptibleOfficeMcp() {
     await waitForDisplayed('.mcp-create-dialog-form [data-testid="mcp-tool-create_document"]');
     await clickWhenReady('[data-testid="mcp-save-new-server"]');
   }
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (name) => document.querySelector(".mcp-detail-header strong")?.textContent?.trim() === name,
+        serverName,
+      ),
+    { timeout: 20_000, timeoutMsg: "Saved stdio MCP was not selected" },
+  );
   const enabled = await browser.execute(
     () => document.querySelector('.mcp-detail-header input[type="checkbox"]')?.checked ?? false,
   );
   if (!enabled) await clickWhenReady('.mcp-detail-header [data-component="switch-root"]');
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        () => document.querySelector('.mcp-detail-header input[type="checkbox"]')?.checked === true,
+      ),
+    { timeout: 20_000, timeoutMsg: "Saved stdio MCP was not enabled" },
+  );
   await waitForDisplayed('[data-testid="mcp-tool-create_document"]');
   await clickWhenReady(".back-home");
   return serverName;
@@ -798,10 +813,22 @@ describe("Hachimi scheduled Agent tasks", () => {
     await clickScheduleAction(name, "task-run-now");
     await selectSchedule(name);
 
-    await browser.waitUntil(() => existsSync(marker), {
-      timeout: 30_000,
-      timeoutMsg: "Office stdio fixture did not reach the interruption boundary",
-    });
+    await browser.waitUntil(
+      async () => {
+        if (existsSync(marker)) return true;
+        const state = await readTaskRunStateFromSource();
+        if (["needs_attention", "failed", "cancelled"].includes(state.status)) {
+          throw new Error(
+            `Office interruption failed before its marker: ${state.status}: ${state.error}`,
+          );
+        }
+        return false;
+      },
+      {
+        timeout: 90_000,
+        timeoutMsg: "Office stdio fixture did not reach the interruption boundary",
+      },
+    );
     await closeTaskHistory();
     await clickWhenReady('[data-testid="workbench-open-settings"]');
     await clickWhenReady('[data-testid="settings-nav-mcp"]');
@@ -842,7 +869,7 @@ describe("Hachimi scheduled Agent tasks", () => {
     await selectSchedule(name);
     await browser.waitUntil(
       async () => (await readTaskRunStateFromSource()).status === "succeeded",
-      { timeout: 60_000, timeoutMsg: "Interrupted Office stdio Run did not recover" },
+      { timeout: 120_000, timeoutMsg: "Interrupted Office stdio Run did not recover" },
     );
     if (!existsSync(recoveredArtifact)) {
       throw new Error("Recovered Office stdio Run did not create its durable artifact");

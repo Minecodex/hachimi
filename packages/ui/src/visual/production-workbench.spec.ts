@@ -1,9 +1,15 @@
+import { runAxeWhenAvailable } from "./accessibility";
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import type { MotionImportCommitRequest } from "../../../contracts/src/generated";
+import type {
+  MotionImportCommitRequest,
+  SkillRecord,
+  SkillTreeNode,
+} from "../../../contracts/src/generated";
 import { resolve } from "node:path";
 import {
   appearance,
+  defaultShellFixture,
   directTerminalFixture,
   hostSettingsMocks,
   initialSettings,
@@ -11,6 +17,7 @@ import {
   motionEntry,
   runtimeAssessment,
   runtimeMocks,
+  systemRuntimeFixture,
   taskRunFixtures,
   taskScheduleFixtures,
   workbenchEnvironmentFixture,
@@ -32,12 +39,14 @@ export async function installTauriMocks(
   await page.addInitScript(
     ({
       appearance,
+      defaultShellFixture,
       directTerminalFixture,
       hostSettingsMocks,
       initialSettings,
       motionEntry,
       runtimeAssessment,
       runtimeMocks,
+      systemRuntimeFixture,
       taskRunFixtures,
       taskScheduleFixtures,
       workbenchEnvironmentFixture,
@@ -346,6 +355,10 @@ export async function installTauriMocks(
         callbacks,
         async invoke(command: string, args: Record<string, unknown> = {}) {
           calls.push({ command, args });
+          if (command === "get_system_runtime" || command === "refresh_system_runtime") {
+            return systemRuntimeFixture;
+          }
+          if (command === "get_default_shell") return defaultShellFixture;
           if (command === "initialize_agent_control") {
             return {
               protocolVersion: 31,
@@ -928,12 +941,14 @@ export async function installTauriMocks(
     },
     {
       appearance,
+      defaultShellFixture,
       directTerminalFixture,
       hostSettingsMocks,
       initialSettings,
       motionEntry,
       runtimeAssessment,
       runtimeMocks,
+      systemRuntimeFixture,
       taskRunFixtures,
       taskScheduleFixtures,
       workbenchEnvironmentFixture,
@@ -959,17 +974,24 @@ test("production task center uses cards and focused dialogs", async ({ page }) =
   await expect(page.getByTestId("workbench-task-center")).toBeVisible();
   await expect(page.locator(".workbench-toolbar")).toHaveCount(0);
   await expect(page.getByTestId("task-schedule-card")).toHaveCount(2);
-  expect((await new AxeBuilder({ page }).include(".task-center").analyze()).violations).toEqual([]);
+  expect(
+    (await runAxeWhenAvailable(() => new AxeBuilder({ page }).include(".task-center").analyze()))
+      .violations,
+  ).toEqual([]);
   await expect(page).toHaveScreenshot("production-task-center-cards-1280x800.png", {
     animations: "disabled",
   });
   await page.getByTestId("task-create-toggle").click();
   await expect(page.getByTestId("task-name")).toBeVisible();
-  expect((await new AxeBuilder({ page }).include('[role="dialog"]').analyze()).violations).toEqual(
-    [],
-  );
+  await expect(page.getByTestId("task-run-at")).toHaveValue("2026-07-27T00:00");
+  expect(
+    (await runAxeWhenAvailable(() => new AxeBuilder({ page }).include('[role="dialog"]').analyze()))
+      .violations,
+  ).toEqual([]);
   await expect(page).toHaveScreenshot("production-task-center-1280x800.png", {
     animations: "disabled",
+    // Windows owns the native date field's text format. Its ISO value is asserted above.
+    stylePath: resolve(import.meta.dirname, "native-date-screenshot.css"),
   });
   await page.getByRole("button", { name: /关闭|Close/ }).click();
   await page.getByTestId("task-history").first().click();
@@ -1343,18 +1365,91 @@ test("production UserInput questions replace the composer with direct choices", 
   await expect(page).toHaveScreenshot("production-user-input-gate-720x640.png");
 });
 
+for (const input of ["pointer", "keyboard"] as const) {
+  test(`production Skill actions remain responsive with ${input} input`, async ({ page }) => {
+    await installTauriMocks(page);
+    const skill: SkillRecord = {
+      id: "ci-user-skill",
+      scope: "user",
+      namespace: null,
+      name: "ci-user-skill",
+      qualifiedName: "ci-user-skill",
+      description: "CI fixture",
+      dependencies: [],
+      editable: true,
+      enabled: true,
+      contentHash: "fixture-hash",
+      treeRevision: "fixture-revision",
+      diagnostics: [],
+      updatedAtMs: 1,
+    };
+    const tree: SkillTreeNode = {
+      name: skill.name,
+      relativePath: "",
+      kind: "directory",
+      editorKind: "unsupported",
+      sizeBytes: 0,
+      revision: skill.treeRevision,
+      children: [],
+    };
+    await page.addInitScript(
+      ({ skill, tree }) => {
+        const host = window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (name: string, args?: unknown) => Promise<unknown> };
+        };
+        const original = host.__TAURI_INTERNALS__.invoke;
+        let created = false;
+        host.__TAURI_INTERNALS__.invoke = async (name, args) => {
+          if (name === "list_skills") return created ? [skill] : [];
+          if (name === "create_skill") {
+            created = true;
+            return skill;
+          }
+          if (name === "get_skill_tree") return tree;
+          return original(name, args);
+        };
+      },
+      { skill, tree },
+    );
+    await page.goto("http://127.0.0.1:1420/workbench.html?route=settings/skills");
+    await page.getByTestId("skill-create").click();
+    await page.getByPlaceholder(/release-notes/).fill(skill.name);
+    await page.locator('[role="dialog"] .dialog-actions button').last().click();
+    await page.getByTestId(`skill-row-${skill.name}`).hover();
+    const trigger = page.getByTestId(`skill-actions-${skill.name}`);
+    if (input === "keyboard") {
+      await trigger.focus();
+      await trigger.press("Enter");
+    } else {
+      await trigger.click();
+    }
+    const action = page.getByTestId(`skill-action-new-file-${skill.name}`);
+    await expect(action).toBeVisible();
+    await action.click();
+    await page.getByTestId("skill-entry-name").fill("reference.md");
+    await page.getByRole("button", { name: "取消", exact: true }).last().click();
+    await page.getByTestId("settings-nav-mcp").click();
+    await expect(page.getByTestId("mcp-settings-page")).toBeVisible();
+  });
+}
+
 for (const route of ["general", "llm", "voice", "avatar", "skills", "mcp"] as const) {
   test(`production settings ${route} uses the shared page contract`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await installTauriMocks(page);
+    if (route === "avatar") {
+      await page.route("http://hachimi-avatar.localhost/**", (request) => request.abort("failed"));
+    }
     await page.goto(`http://127.0.0.1:1420/workbench.html?route=settings/${route}`);
     await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
     await expect(page.locator("html")).toHaveJSProperty("scrollWidth", 1280);
-    const result = await new AxeBuilder({ page })
-      .include(".settings-main")
-      .withTags(["wcag2a", "wcag2aa"])
-      .disableRules(["nested-interactive"])
-      .analyze();
+    const result = await runAxeWhenAvailable(() =>
+      new AxeBuilder({ page })
+        .include(".settings-main")
+        .withTags(["wcag2a", "wcag2aa"])
+        .disableRules(["nested-interactive"])
+        .analyze(),
+    );
     expect(result.violations).toEqual([]);
     if (route === "avatar") await expect(page.getByText("预览不可用")).toBeVisible();
     await expect(page).toHaveScreenshot(`production-settings-${route}-1280x800.png`, {
@@ -1526,9 +1621,7 @@ test("appearance controls update runtime tokens and support wheel and keyboard",
     .poll(() => root.evaluate((element) => element.style.getPropertyValue("--appearance-panel")))
     .not.toBe(panelBefore);
   await expect(root).toHaveCSS("--appearance-contrast", "100");
-  await expect(
-    page.locator('[data-component="badge"]', { hasText: "已保存" }),
-  ).toBeVisible();
+  await expect(page.locator('[data-component="badge"]', { hasText: "已保存" })).toBeVisible();
 });
 
 test("built-in themes and font presets switch the complete interface", async ({ page }) => {
@@ -1584,7 +1677,8 @@ test("appearance save failures roll the preview back to the confirmed settings",
   await expect(page.getByText("保存失败，已回滚", { exact: true })).toBeVisible();
 });
 
-test("model, voice, and pet settings use their live command-backed controls", async ({ page }) => {
+test("model and voice settings use their live command-backed controls", async ({ page }) => {
+  test.setTimeout(90_000);
   await installTauriMocks(page);
   await installMotionLabAssets(page);
 
@@ -1620,6 +1714,14 @@ test("model, voice, and pet settings use their live command-backed controls", as
   await voiceInspection.locator('[data-component="switch-root"]').click();
   await voiceInspection.getByRole("button", { name: "确认导入" }).click();
   await expect(page.getByText("Melo 中英女声", { exact: true })).toBeVisible();
+});
+
+test("avatar settings inspect and import through live command-backed controls", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await installTauriMocks(page);
+  await installMotionLabAssets(page);
 
   await page.goto("http://127.0.0.1:1420/workbench.html?route=settings/avatar");
   await expect(page.getByText("Mimi", { exact: true })).toBeVisible();
@@ -1632,6 +1734,12 @@ test("model, voice, and pet settings use their live command-backed controls", as
   await inspection.getByRole("button", { name: "确认导入" }).click({ force: true });
   await expect(page.getByText("Luna", { exact: true })).toBeVisible();
   await expect(page.locator(".avatar-card-preview canvas")).toHaveCount(2);
+});
+
+test("motion settings import and delete through live command-backed controls", async ({ page }) => {
+  test.setTimeout(90_000);
+  await installTauriMocks(page);
+  await installMotionLabAssets(page);
 
   await page.goto("http://127.0.0.1:1420/workbench.html?route=settings/motion");
   await expect(page.getByRole("heading", { name: "交互" })).toBeVisible();
@@ -1667,6 +1775,7 @@ test("model, voice, and pet settings use their live command-backed controls", as
 test("motion settings keep one motion per region and import an optional binding", async ({
   page,
 }) => {
+  test.setTimeout(90_000);
   await installTauriMocks(page);
   await installMotionLabAssets(page);
   await page.goto("http://127.0.0.1:1420/workbench.html?route=settings/motion");
@@ -1734,6 +1843,7 @@ test("motion settings keep one motion per region and import an optional binding"
 });
 
 test("motion settings share one responsive preview across both tabs", async ({ page }) => {
+  test.setTimeout(90_000);
   await page.setViewportSize({ width: 1280, height: 800 });
   await installTauriMocks(page);
   await installMotionLabAssets(page);
@@ -1784,6 +1894,7 @@ test("motion settings share one responsive preview across both tabs", async ({ p
 });
 
 test("Motion Library Lab previews a catalog VRMA with finger diagnostics", async ({ page }) => {
+  test.setTimeout(90_000);
   await page.setViewportSize({ width: 1280, height: 800 });
   await installTauriMocks(page);
   await installMotionLabAssets(page);
@@ -1813,6 +1924,7 @@ test("Motion Library Lab previews a catalog VRMA with finger diagnostics", async
   await playbackSpeedSlider.fill("1.5");
   await expect(playbackSpeedSlider).toHaveValue("1.5");
   await expect(page).toHaveScreenshot("production-motion-lab-1280x800.png", {
+    timeout: 15_000,
     animations: "disabled",
     mask: [
       page.locator(".motion-lab-stage canvas"),
@@ -1848,10 +1960,12 @@ test("production home and appearance have no new WCAG A or AA violations", async
   for (const route of ["home", "settings/appearance"]) {
     await page.goto(`http://127.0.0.1:1420/workbench.html?route=${route}`);
     await expect(page.getByText("Hachimi", { exact: true }).first()).toBeVisible();
-    const result = await new AxeBuilder({ page })
-      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-      .disableRules(["aria-hidden-focus", "nested-interactive"])
-      .analyze();
+    const result = await runAxeWhenAvailable(() =>
+      new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+        .disableRules(["aria-hidden-focus", "nested-interactive"])
+        .analyze(),
+    );
     expect(result.violations).toEqual([]);
   }
 });

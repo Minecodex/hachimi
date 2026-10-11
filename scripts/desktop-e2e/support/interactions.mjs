@@ -1,10 +1,10 @@
 /* global HTMLButtonElement, HTMLElement, HTMLInputElement, XPathResult, document, getComputedStyle */
 
-async function readyPoint(selector, timeout, requireEnabled, description) {
+async function readyPoint(selector, timeout, requireEnabled, description, requireHit = false) {
   return browser.waitUntil(
     async () =>
       browser.execute(
-        (targetSelector, mustBeEnabled) => {
+        (targetSelector, mustBeEnabled, mustHitTarget) => {
           const target = targetSelector.startsWith("/")
             ? document.evaluate(
                 targetSelector,
@@ -15,7 +15,7 @@ async function readyPoint(selector, timeout, requireEnabled, description) {
               ).singleNodeValue
             : document.querySelector(targetSelector);
           if (!(target instanceof HTMLElement)) return false;
-          target.scrollIntoView({ block: "center", inline: "nearest" });
+          target.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
           const style = getComputedStyle(target);
           const bounds = target.getBoundingClientRect();
           const disabled =
@@ -32,13 +32,15 @@ async function readyPoint(selector, timeout, requireEnabled, description) {
           ) {
             return false;
           }
-          return {
-            x: Math.round(bounds.left + bounds.width / 2),
-            y: Math.round(bounds.top + bounds.height / 2),
-          };
+          const x = Math.round(bounds.left + bounds.width / 2);
+          const y = Math.round(bounds.top + bounds.height / 2);
+          const hit = document.elementFromPoint(x, y);
+          if (mustHitTarget && hit !== target && !target.contains(hit)) return false;
+          return { x, y };
         },
         selector,
         requireEnabled,
+        requireHit,
       ),
     { timeout, timeoutMsg: `Element did not become ${description}: ${selector}` },
   );
@@ -47,13 +49,9 @@ async function readyPoint(selector, timeout, requireEnabled, description) {
 export async function clickWhenReady(selector, timeout = 20_000) {
   const hoverPoint = await readyPoint(selector, timeout, true, "clickable");
   await browser.action("pointer").move({ duration: 0, x: hoverPoint.x, y: hoverPoint.y }).perform();
-  const clickPoint = await readyPoint(selector, timeout, true, "clickable after pointer move");
-  await browser
-    .action("pointer")
-    .move({ duration: 0, x: clickPoint.x, y: clickPoint.y })
-    .down({ button: 0 })
-    .up({ button: 0 })
-    .perform();
+  await readyPoint(selector, timeout, true, "clickable after pointer move", true);
+  // Element click lets the native driver account for WebView scale and scroll offsets.
+  await $(selector).click();
 }
 
 export async function hoverWhenReady(selector, timeout = 20_000) {

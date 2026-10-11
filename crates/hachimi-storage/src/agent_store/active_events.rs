@@ -94,7 +94,7 @@ impl AgentStore {
     ) -> Result<RunEventEnvelope, AgentStoreError> {
         let delta = delta.chars().take(MAX_DELTA_CHARS).collect::<String>();
         let created_at_ms = now_ms();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let sequence = next_sequence_tx(&mut transaction, session_id, created_at_ms).await?;
         transaction.commit().await?;
         let envelope = RunEventEnvelope {

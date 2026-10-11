@@ -883,6 +883,8 @@ export class AvatarRuntime {
     const instance = this.instance;
     if (!instance) return;
     this.canvas.dataset["motionFrameAt"] = String(Math.round(now));
+    this.canvas.dataset["motionActionId"] =
+      this.motionOrchestrator.winners().find((intent) => intent.slot === "action")?.motionId ?? "";
     this.canvas.dataset["motionSlots"] = this.motionOrchestrator
       .winners()
       .map((intent) => intent.slot)

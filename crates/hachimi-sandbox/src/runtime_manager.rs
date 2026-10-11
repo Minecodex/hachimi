@@ -362,7 +362,7 @@ mod tests {
         let root = tempfile::tempdir().expect("root");
         let marker = root.path().join("setup.json");
         let launcher = root.path().join("missing-launcher.exe");
-        let probe = Arc::new(WindowsSandboxReadinessProbe::new(&marker));
+        let probe = Arc::new(crate::WindowsSandboxReadinessProbe::new(&marker));
         let manager = SandboxRuntimeManager::new(
             probe,
             root.path().join("missing-setup.exe"),

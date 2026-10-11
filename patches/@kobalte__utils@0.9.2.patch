@@ -1,0 +1,39 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 9b1289e66449ca7252cc4bd86922f8f400759460..7aa5256bfbb51122b4cd4c1cbd950ee88585e871 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -769,7 +769,7 @@ function scrollIntoViewport(targetElement, opts) {
+           targetElement
+         );
+         targetElement = scrollParent;
+-        scrollParent = getScrollParent(targetElement);
++        scrollParent = getScrollParent(targetElement.parentElement);
+       }
+     }
+   }
+diff --git a/dist/index.js b/dist/index.js
+index 503080597f7d15c7dce8f4a057c6faf6a3ad929f..ee4198aa793fa610820b72249c4ed4b5be1f4415 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -767,7 +767,7 @@ function scrollIntoViewport(targetElement, opts) {
+           targetElement
+         );
+         targetElement = scrollParent;
+-        scrollParent = getScrollParent(targetElement);
++        scrollParent = getScrollParent(targetElement.parentElement);
+       }
+     }
+   }
+diff --git a/src/scroll-into-view.ts b/src/scroll-into-view.ts
+index 4a6fb94ba296797cf6bad59dd2ab0e1845306035..22b3acfdf8caafb07595504aa002d9fa2913a9c9 100644
+--- a/src/scroll-into-view.ts
++++ b/src/scroll-into-view.ts
+@@ -122,7 +122,7 @@ export function scrollIntoViewport(
+ 				);
+ 				// biome-ignore lint/style/noParameterAssign: used in loop
+ 				targetElement = scrollParent;
+-				scrollParent = getScrollParent(targetElement);
++				scrollParent = getScrollParent(targetElement.parentElement);
+ 			}
+ 		}
+ 	}

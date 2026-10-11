@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { MotionCatalogEntry, MotionTransitionProfile } from "@hachimi/contracts";
 import { VRMLoaderPlugin, type VRM } from "@pixiv/three-vrm";
 import { VRMAnimationLoaderPlugin } from "@pixiv/three-vrm-animation";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MotionAssetLibrary } from "./motion-asset-library";
 import type { SampledMotionPose } from "./motion-asset-library";
@@ -22,6 +22,81 @@ Object.defineProperty(globalThis, "createImageBitmap", {
 });
 
 describe("bundled VRMA runtime integration", () => {
+  it("retries a failed source shared by a parent and its derived motion", async () => {
+    const catalog = JSON.parse(
+      await readFile(`${repositoryRoot}/assets/avatar-motions-v5/catalog.json`, "utf8"),
+    ) as BuiltinCatalog;
+    const derived = catalog.entries.find((entry) => entry.motionRole === "action_recover_to_idle")!;
+    const source = catalog.entries.find((entry) => entry.id === derived.derivedFromMotionId)!;
+    const bytes = await readFile(
+      `${repositoryRoot}/assets/avatar-motions-v5/builtin/${source.fileName}`,
+    );
+    const motionLoader = new GLTFLoader();
+    motionLoader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+    const library = new MotionAssetLibrary(motionLoader, async (id) => ({
+      entry: catalog.entries.find((entry) => entry.id === id)!,
+      assetUrl: `data:model/gltf-binary;base64,${bytes.toString("base64")}`,
+    }));
+    library.setCatalog(catalog.entries);
+    const request = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValueOnce(new Error("source unavailable"));
+    try {
+      await expect(library.preload([source.id, derived.id])).rejects.toThrow("source unavailable");
+      expect(library.sourceCount()).toBe(0);
+      await expect(library.preload([source.id, derived.id])).resolves.toBeUndefined();
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(library.sourceCount()).toBe(2);
+    } finally {
+      request.mockRestore();
+    }
+  });
+
+  it("releases a stalled native asset lookup and can retry the real source", async () => {
+    const catalog = JSON.parse(
+      await readFile(`${repositoryRoot}/assets/avatar-motions-v5/catalog.json`, "utf8"),
+    ) as BuiltinCatalog;
+    const derived = catalog.entries.find((entry) => entry.motionRole === "action_recover_to_idle")!;
+    const source = catalog.entries.find((entry) => entry.id === derived.derivedFromMotionId)!;
+    const bytes = await readFile(
+      `${repositoryRoot}/assets/avatar-motions-v5/builtin/${source.fileName}`,
+    );
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+    let requests = 0;
+    const stages: string[] = [];
+    const library = new MotionAssetLibrary(
+      loader,
+      async () => {
+        requests += 1;
+        if (requests === 1) return new Promise<never>(() => {});
+        return {
+          entry: source,
+          assetUrl: `data:model/gltf-binary;base64,${bytes.toString("base64")}`,
+        };
+      },
+      undefined,
+      (id, stage) => stages.push(`${id}: ${stage}`),
+    );
+    library.setCatalog(catalog.entries);
+    vi.useFakeTimers();
+    try {
+      const load = library.preload([source.id, derived.id]);
+      const rejected = expect(load).rejects.toThrow(`${source.id} resolve did not respond`);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await rejected;
+      expect(library.sourceCount()).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+    await expect(library.preload([source.id, derived.id])).resolves.toBeUndefined();
+    expect(requests).toBe(2);
+    expect(stages).toContain(`${source.id}: fetch`);
+    expect(stages).toContain(`${source.id}: parse`);
+    expect(stages.at(-1)).toBe(`${source.id}: ready`);
+  });
+
   it("retargets and samples every built-in motion on the default VRM", async () => {
     const catalog = JSON.parse(
       await readFile(`${repositoryRoot}/assets/avatar-motions-v5/catalog.json`, "utf8"),
@@ -93,13 +168,20 @@ describe("bundled VRMA runtime integration", () => {
 
     const derived = catalog.entries.find((entry) => entry.motionRole === "action_recover_to_idle")!;
     const source = entries.get(derived.derivedFromMotionId!)!;
-    await library.prepare(vrm!, source.id);
-    await library.prepare(vrm!, derived.id);
-    const derivedStart = library.sample(vrm!, derived.id, 0)!;
-    const sourceStart = library.sample(vrm!, source.id, derived.sourceStartMs ?? 0)!;
+    let sourceReads = 0;
+    const derivedLibrary = new MotionAssetLibrary(motionLoader, async (id) => {
+      sourceReads += 1;
+      return resolveAsset(id);
+    });
+    derivedLibrary.setCatalog(catalog.entries);
+    await derivedLibrary.prepare(vrm!, source.id);
+    await derivedLibrary.prepare(vrm!, derived.id);
+    expect(sourceReads).toBe(1);
+    const derivedStart = derivedLibrary.sample(vrm!, derived.id, 0)!;
+    const sourceStart = derivedLibrary.sample(vrm!, source.id, derived.sourceStartMs ?? 0)!;
     expect(maxPoseAngle(derivedStart, sourceStart)).toBeLessThan(1e-6);
-    const derivedEnd = library.sample(vrm!, derived.id, derived.durationMs - 0.001)!;
-    const sourceEnd = library.sample(
+    const derivedEnd = derivedLibrary.sample(vrm!, derived.id, derived.durationMs - 0.001)!;
+    const sourceEnd = derivedLibrary.sample(
       vrm!,
       source.id,
       (derived.sourceEndMs ?? source.durationMs) - 0.001,

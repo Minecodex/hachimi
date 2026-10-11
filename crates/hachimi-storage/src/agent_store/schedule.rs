@@ -121,7 +121,7 @@ impl AgentStore {
         idempotency_key: &str,
         definition: &ScheduleDefinition,
     ) -> Result<ScheduleSnapshot, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if let Some(existing_id) = sqlx::query_scalar::<_, String>(
             "SELECT resource_id FROM idempotency_records WHERE principal = ? AND method = 'schedule.create' AND idempotency_key = ?",
         )
@@ -348,7 +348,7 @@ impl AgentStore {
         &self,
         task: &TaskRunRecord,
     ) -> Result<TaskRunRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         insert_task_run_tx(&mut transaction, task).await?;
         transaction.commit().await?;
         Ok(task.clone())
@@ -360,7 +360,7 @@ impl AgentStore {
         expected_schedule_revision: u64,
         task: &TaskRunRecord,
     ) -> Result<ScheduleInvocationClaim, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let claim = claim_schedule_invocation_tx(
             &mut transaction,
             schedule_id,
@@ -509,7 +509,7 @@ impl AgentStore {
         artifact_ids: &[ArtifactId],
         updated_at_ms: i64,
     ) -> Result<TaskRunRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query("SELECT * FROM task_runs WHERE id = ?")
             .bind(task_run_id.as_str())
             .fetch_optional(&mut *transaction)

@@ -4,7 +4,7 @@ import type {
   WorkbenchSessionSnapshot,
 } from "@hachimi/contracts";
 import { I18nProvider } from "@hachimi/i18n";
-import type { JSX } from "solid-js";
+import { createSignal, Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -338,6 +338,73 @@ describe("TerminalPanel", () => {
     expect(root.querySelectorAll(".terminal-tab-select")).toHaveLength(0);
     expect(onClose).toHaveBeenCalledOnce();
     dispose();
+  });
+
+  it("starts a fresh process after the last terminal is closed and the panel reopens", async () => {
+    const first = process("reopen", 1);
+    const second = process("reopen", 2);
+    let terminated = false;
+    const port = {
+      listProcesses: vi.fn(async () => []),
+      getDefaultShell: vi.fn(async () => ({
+        executablePath: "powershell.exe",
+        kind: "power_shell" as const,
+        interactiveArgs: ["-NoProfile"],
+        commandArgs: ["-Command"],
+        runtimeRevision: 1,
+      })),
+      spawnProcess: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second),
+      readProcess: vi.fn(async (request: { processSessionId: string }) => ({
+        process:
+          request.processSessionId === second.id
+            ? second
+            : terminated
+              ? process("reopen", 1, "terminated")
+              : first,
+        chunks: [],
+        nextSequence: 0,
+        closed: terminated && request.processSessionId === first.id,
+      })),
+      resizeProcess: vi.fn(async () => undefined),
+      terminateProcess: vi.fn(async () => {
+        terminated = true;
+        return process("reopen", 1, "terminated");
+      }),
+    } as unknown as WorkbenchCommandPort;
+    const [visible, setVisible] = createSignal(true);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(
+      () => (
+        <I18nProvider initialLocale="en-US">
+          <Show when={visible()}>
+            <TerminalPanel
+              projectId="project-reopen"
+              snapshot={snapshot("reopen")}
+              commandPort={port}
+              onClose={() => setVisible(false)}
+            />
+          </Show>
+        </I18nProvider>
+      ),
+      root,
+    );
+    try {
+      await settle();
+      expect(port.spawnProcess).toHaveBeenCalledOnce();
+      root.querySelector<HTMLButtonElement>('[aria-label="Close terminal"]')?.click();
+      await settle();
+      expect(port.terminateProcess).toHaveBeenCalledOnce();
+      expect(root.querySelector(".terminal-panel")).toBeNull();
+      setVisible(true);
+      await settle();
+      expect(port.spawnProcess).toHaveBeenCalledTimes(2);
+      expect(root.querySelector(".terminal-session.active")?.getAttribute("data-process-id")).toBe(
+        second.id,
+      );
+    } finally {
+      dispose();
+    }
   });
 
   it("shares one automatic launch across mounts for the same project", async () => {

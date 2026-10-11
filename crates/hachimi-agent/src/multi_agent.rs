@@ -145,35 +145,50 @@ impl MultiAgentCoordinator {
                 .store
                 .transition_agent_task(&task_id, AgentTaskStatus::Running, None, None, now_ms())
                 .await;
-            let execution = executor.execute(request);
-            tokio::pin!(execution);
-            let mut heartbeat = tokio::time::interval(Duration::from_millis(TASK_LEASE_RENEW_MS));
-            heartbeat.tick().await;
-            let mut lease_lost = false;
-            let execution_result = loop {
-                tokio::select! {
-                    _ = cancellation.cancelled() => {
-                        let _ = executor.registry().cancel(&child_run_id, child_generation);
-                        break execution.await;
-                    }
-                    result = &mut execution => break result,
-                    _ = heartbeat.tick() => {
-                        match coordinator.store.renew_agent_task_execution_lease(
-                            &task_id,
-                            claim.execution_generation,
-                            &claim.lease_owner,
-                            now_ms(),
-                            TASK_LEASE_DURATION_MS,
-                        ).await {
-                            Ok(true) => {}
-                            _ => {
-                                lease_lost = true;
-                                let _ = executor.registry().cancel(&child_run_id, child_generation);
-                                break execution.await;
-                            }
+            let (execution_result, lease_lost) = {
+                let execution = executor.execute(request);
+                tokio::pin!(execution);
+                let lease_heartbeat = async {
+                    let mut interval =
+                        tokio::time::interval(Duration::from_millis(TASK_LEASE_RENEW_MS));
+                    interval.tick().await;
+                    loop {
+                        interval.tick().await;
+                        if !matches!(
+                            coordinator
+                                .store
+                                .renew_agent_task_execution_lease(
+                                    &task_id,
+                                    claim.execution_generation,
+                                    &claim.lease_owner,
+                                    now_ms(),
+                                    TASK_LEASE_DURATION_MS,
+                                )
+                                .await,
+                            Ok(true)
+                        ) {
+                            return;
                         }
                     }
-                }
+                };
+                tokio::pin!(lease_heartbeat);
+                let mut lease_lost = false;
+                // Keep polling execution while lease renewal awaits the shared
+                // SQLite connection. Awaiting renewal inside an interval branch
+                // can suspend the very transaction that must release that connection.
+                let execution_result = tokio::select! {
+                        _ = cancellation.cancelled() => {
+                            let _ = executor.registry().cancel(&child_run_id, child_generation);
+                            execution.await
+                        }
+                        result = &mut execution => result,
+                        _ = &mut lease_heartbeat => {
+                            lease_lost = true;
+                            let _ = executor.registry().cancel(&child_run_id, child_generation);
+                            execution.await
+                        }
+                };
+                (execution_result, lease_lost)
             };
             if execution_result.is_err() {
                 let cancellation_requested = cancellation.is_cancelled();
@@ -1412,6 +1427,109 @@ mod tests {
             finished_at_ms: None,
             updated_at_ms: now_ms(),
         }
+    }
+
+    #[derive(Debug)]
+    struct ConnectionHoldingPreparer(AgentStore);
+
+    impl AgentRunPreparer for ConnectionHoldingPreparer {
+        fn prepare(
+            &self,
+            request: AgentRunRequest,
+            checkpoint: Option<hachimi_protocol::CompactionCheckpoint>,
+            model: Arc<dyn ModelRuntime>,
+            cancellation: CancellationToken,
+        ) -> AgentPreparationFuture {
+            let store = self.0.clone();
+            Box::pin(async move {
+                let transaction = store.pool().begin().await.expect("SQLite transaction");
+                tokio::time::sleep(Duration::from_millis(TASK_LEASE_RENEW_MS + 500)).await;
+                // Execution must remain polled to reach this commit while
+                // the heartbeat is waiting for the same single connection.
+                transaction
+                    .commit()
+                    .await
+                    .expect("release SQLite connection");
+                RecoveryPreparer
+                    .prepare(request, checkpoint, model, cancellation)
+                    .await
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn heartbeat_does_not_suspend_execution_holding_the_sqlite_connection() {
+        let store = AgentStore::connect_in_memory().await.expect("store");
+        let parent = create_test_run(
+            &store,
+            "heartbeat-parent",
+            "Parent",
+            RunOrigin::Manual,
+            None,
+        )
+        .await;
+        let child = create_test_run(
+            &store,
+            "heartbeat-child",
+            "Child",
+            RunOrigin::Manual,
+            Some((&parent.session, &parent.run)),
+        )
+        .await;
+        let task = test_task(
+            "heartbeat-child-task",
+            &parent,
+            &child,
+            AgentTaskStatus::Queued,
+        );
+        let grants = hachimi_policy::expand_permission_profile(
+            PermissionProfile::ReadOnly,
+            BehaviorMode::Default,
+            child.session.id.clone(),
+            child.run.id.clone(),
+            "general://heartbeat".into(),
+        );
+        store
+            .persist_run_security_snapshot(&grants, &test_sandbox(), now_ms())
+            .await
+            .expect("security snapshot");
+        store.create_agent_task(&task).await.expect("task");
+        let model = Arc::new(RecoveryModel::default());
+        let coordinator = MultiAgentCoordinator::new(store.clone());
+        coordinator
+            .install_executor(AgentRunExecutor::new(
+                store.clone(),
+                Arc::new(crate::AgentExecutorRegistry::new(2)),
+                Arc::new(RecoveryFactory(model)),
+                Arc::new(ConnectionHoldingPreparer(store.clone())),
+            ))
+            .expect("executor");
+        let request = coordinator
+            .recovered_agent_request(&task, child.run.clone(), None)
+            .await
+            .expect("request");
+        assert!(
+            coordinator
+                .launch_task_execution(request, CancellationToken::new())
+                .await
+                .expect("launch")
+        );
+        tokio::time::timeout(Duration::from_secs(16), async {
+            loop {
+                let current = store
+                    .get_agent_task(&task.id)
+                    .await
+                    .expect("task lookup")
+                    .expect("task row");
+                if current.status.is_terminal() {
+                    assert_eq!(current.status, AgentTaskStatus::Succeeded, "{current:?}");
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("execution and heartbeat must make concurrent progress");
     }
 
     #[tokio::test]

@@ -40,7 +40,7 @@ impl AgentStore {
         let run_id = &run_snapshot.id;
         let expected_generation = run_snapshot.generation;
         let requested = run_snapshot.requested_capabilities;
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let run = get_run_tx(&mut transaction, run_id)
             .await?
             .ok_or_else(|| AgentStoreError::RunNotFound(run_id.clone()))?;
@@ -135,7 +135,7 @@ impl AgentStore {
         &self,
         request: &SessionResumeRequest,
     ) -> Result<SessionResumeSnapshot, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let session_row = sqlx::query("SELECT * FROM sessions WHERE id = ?")
             .bind(request.session_id.as_str())
             .fetch_optional(&mut *transaction)
@@ -237,7 +237,7 @@ impl AgentStore {
         new_session_id: SessionId,
         created_at_ms: i64,
     ) -> Result<SessionRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if let Some(existing_id) = sqlx::query_scalar::<_, String>(
             "SELECT resource_id FROM idempotency_records WHERE principal = ? AND method = 'session.fork' AND idempotency_key = ?",
         )
@@ -412,7 +412,7 @@ impl AgentStore {
                 value: "title exceeds 200 characters".into(),
             });
         }
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let changed = sqlx::query(
             "UPDATE sessions SET title = COALESCE(?, title), archived = COALESCE(?, archived), pinned = COALESCE(?, pinned), updated_at_ms = ? WHERE id = ?",
         )
@@ -481,7 +481,7 @@ impl AgentStore {
         if input.is_empty() || input.chars().count() > 32_000 || run_id != expected_run_id {
             return Err(AgentStoreError::RunPreconditionFailed);
         }
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let run = get_run_tx(&mut transaction, run_id)
             .await?
             .ok_or_else(|| AgentStoreError::RunNotFound(run_id.clone()))?;
@@ -556,7 +556,7 @@ impl AgentStore {
         run_generation: u64,
         consumed_at_ms: i64,
     ) -> Result<Vec<RunSteerRecord>, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let run = get_run_tx(&mut transaction, run_id)
             .await?
             .ok_or_else(|| AgentStoreError::RunNotFound(run_id.clone()))?;

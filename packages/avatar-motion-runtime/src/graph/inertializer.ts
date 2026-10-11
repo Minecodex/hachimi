@@ -50,7 +50,8 @@ export class FullPoseInertializer {
       const currentRotation = current.rotations.get(name);
       if (!currentRotation) continue;
       const difference = targetRotation.clone().invert().multiply(currentRotation).normalize();
-      if (difference.w < 0) difference.set(-difference.x, -difference.y, -difference.z, -difference.w);
+      if (difference.w < 0)
+        difference.set(-difference.x, -difference.y, -difference.z, -difference.w);
       this.rotations.set(name, {
         offset: quaternionLog(difference),
         velocity: (currentVelocity.angular.get(name) ?? new Vector3())
@@ -101,7 +102,12 @@ export class FullPoseInertializer {
     const rootDecay = decayAt(this.elapsed, halfLives.root);
     const hipsPosition = (target.hipsPosition ?? new Vector3())
       .clone()
-      .add(this.hipsOffset.clone().addScaledVector(this.hipsVelocity, this.elapsed).multiplyScalar(rootDecay));
+      .add(
+        this.hipsOffset
+          .clone()
+          .addScaledVector(this.hipsVelocity, this.elapsed)
+          .multiplyScalar(rootDecay),
+      );
     const expressionDecay = decayAt(this.elapsed, halfLives.expression);
     const expressions = new Map<string, number>();
     for (const name of new Set([...target.expressions.keys(), ...this.expressions.keys()])) {
@@ -119,7 +125,9 @@ export class FullPoseInertializer {
       yawDegrees: (target.lookAt?.yawDegrees ?? 0) + lookResidual.x,
       pitchDegrees: (target.lookAt?.pitchDegrees ?? 0) + lookResidual.y,
     };
-    if (Math.max(rootDecay, expressionDecay, lookDecay, decayAt(this.elapsed, halfLives.body)) < 0.001) {
+    if (
+      Math.max(rootDecay, expressionDecay, lookDecay, decayAt(this.elapsed, halfLives.body)) < 0.001
+    ) {
       this.reset();
     }
     return { rotations, hipsPosition, expressions, lookAt };

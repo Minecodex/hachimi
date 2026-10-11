@@ -14,13 +14,15 @@ fn main() {
         std::thread::sleep(Duration::from_secs(30));
         return;
     }
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input).expect("stdin");
+    let request: Value = serde_json::from_str(input.trim()).expect("JSON-RPC request");
+    // Consume the request before closing stdin: the malformed response must
+    // exercise response validation rather than race the parent's pipe writer.
     if mode == "malformed" {
         println!("not-json");
         return;
     }
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input).expect("stdin");
-    let request: Value = serde_json::from_str(input.trim()).expect("JSON-RPC request");
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     if mode == "error" {
         println!(

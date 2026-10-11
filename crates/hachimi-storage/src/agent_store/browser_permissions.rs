@@ -145,7 +145,7 @@ impl AgentStore {
         let now = now_ms();
         let expires = now.saturating_add(PERMISSION_REQUEST_LIFETIME_MS);
         let capabilities = vec![BrowserCapability::Observe, BrowserCapability::Act];
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         expire_pending_requests(&mut transaction, now).await?;
         let valid_owner = sqlx::query(
             "SELECT 1 FROM runs WHERE id = ? AND session_id = ? AND generation = ? AND status NOT IN ('succeeded', 'failed', 'cancelled', 'interrupted')",
@@ -244,7 +244,7 @@ impl AgentStore {
         decision: BrowserPermissionDecision,
     ) -> Result<EmbeddedBrowserPermissionRequest, AgentStoreError> {
         let now = now_ms();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         expire_pending_requests(&mut transaction, now).await?;
         let row = sqlx::query(
             "SELECT requests.*, runs.generation AS current_generation, runs.status AS run_status FROM embedded_browser_permission_requests AS requests INNER JOIN runs ON runs.id = requests.owner_run_id WHERE requests.id = ?",

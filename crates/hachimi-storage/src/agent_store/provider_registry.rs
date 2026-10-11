@@ -64,7 +64,7 @@ impl AgentStore {
                 endpoint.compatibility_profile_id.clone(),
             ));
         }
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let existing = sqlx::query("SELECT config_revision FROM provider_endpoints WHERE id = ?")
             .bind(endpoint.id.as_str())
             .fetch_optional(&mut *transaction)
@@ -148,7 +148,7 @@ impl AgentStore {
                 account.endpoint_id.clone(),
             ));
         }
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let existing = sqlx::query("SELECT config_revision FROM provider_accounts WHERE id = ?")
             .bind(account.id.as_str())
             .fetch_optional(&mut *transaction)

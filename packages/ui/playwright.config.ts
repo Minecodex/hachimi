@@ -2,8 +2,14 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./src/visual",
+  expect: { timeout: 15_000 },
+  ...(process.env.CI ? { workers: 1 } : {}),
   snapshotPathTemplate: "{testDir}/__screenshots__/{arg}{ext}",
   use: {
+    screenshot: "only-on-failure",
+    trace: "retain-on-failure",
+    locale: "en-US",
+    timezoneId: "Asia/Shanghai",
     baseURL: "http://127.0.0.1:6007",
     viewport: { width: 1280, height: 720 },
   },

@@ -140,7 +140,10 @@ export class MotionLabRuntime {
 
   constructor(
     private readonly container: HTMLElement,
-    private readonly options: { visualMode?: MotionRuntimeVisualMode } = {},
+    private readonly options: {
+      visualMode?: MotionRuntimeVisualMode;
+      onAssetStage?: (id: string, stage: string) => void;
+    } = {},
   ) {
     this.renderer = new WebGLRenderer({ antialias: true, alpha: true, premultipliedAlpha: true });
     this.renderer.outputColorSpace = SRGBColorSpace;
@@ -154,9 +157,9 @@ export class MotionLabRuntime {
       (id) => commands.getMotionRuntimeAsset(id),
       {
         read: (cacheKey) => commands.readMotionFeatureIndex({ cacheKey }),
-        write: (cacheKey, payload) =>
-          commands.writeMotionFeatureIndex({ cacheKey, payload }),
+        write: (cacheKey, payload) => commands.writeMotionFeatureIndex({ cacheKey, payload }),
       },
+      options.onAssetStage,
     );
     this.scene.add(new AmbientLight(0xffffff, 0.7));
     this.scene.add(new HemisphereLight(0xf2f0ff, 0x554b68, 0.9));

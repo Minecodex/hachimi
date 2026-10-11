@@ -5,7 +5,7 @@ import type {
   MotionSlot,
   MotionTransitionProfile,
 } from "@hachimi/contracts";
-import type { Quaternion, Vector2, Vector3 } from "three";
+import type { Vector2, Vector3 } from "three";
 import type { MotionChannelWeights } from "../motion-composer";
 import type { SampledMotionPose } from "../motion-asset-library";
 
