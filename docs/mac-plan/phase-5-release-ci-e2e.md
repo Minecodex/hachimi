@@ -27,7 +27,7 @@
 
 ## 3. CI 矩阵
 
-现状：`.github/workflows/ci.yml:12-108` 5 个 job 全部 `runs-on: windows-latest`；`windows-release-gate.yml` 用 `[self-hosted, windows, x64]` runner。
+现状（2026-10-11）：CI 已覆盖托管 Windows x64/macOS ARM64 与共享 UI；`windows-release-gate.yml` 只在托管 Windows 构建不可变软件候选。专用 Runner、外部 staging 与正式 RC/GA 认证配置已从 Actions 移除，独立环境验收保留待验证。具体触发与 PR/完整范围见 [CI 规则](../ci.md)。
 
 - [x] `ci.yml` 增加 `macos-14`（arm64）job：rust 静态检查 + `cargo test` + CEF host 冒烟（2026-08-30 落地的最小回归网；前端测试仍由 Windows job 承担，未含 release gate）。
 - [ ] 新增 `mac-release-gate.yml`（或扩展 windows-release-gate 为多平台）：签名公证后的 dmg / portable 产物、产物 manifest、证据上传。

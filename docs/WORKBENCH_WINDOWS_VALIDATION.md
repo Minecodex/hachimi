@@ -1,8 +1,10 @@
 # Workbench Windows 验收清单
 
-更新时间：2026-08-08
+更新时间：2026-10-11
 
 本文记录 Windows 发布环境仍需执行的验收项。产品功能状态统一见 [路线图](ROADMAP.md)。
+
+GitHub Actions 当前只构建托管软件候选并验证标准用户桌面流程。管理员安装、身份与外部环境认证保留独立命令，环境具备后再执行；原专用 Runner 工作流已移除。具体 CI 分层见 [CI 规则](ci.md)。
 
 ## 普通 Desktop E2E
 
@@ -29,7 +31,7 @@
 
 ## 管理员 Windows Runner
 
-- [x] `pnpm test:windows:release` 与受保护 self-hosted workflow 已建立，测试不自动重试；
+- [x] `pnpm test:windows:release` 独立验收入口已建立，测试不自动重试；专用 Actions 配置已移除；
 - [x] restricted process 显式 security-capabilities + handle-list，包含未列 inheritable sentinel handle smoke；
 - [ ] MSI/NSIS setup helper、marker、ACL、身份/SID 和 policy 版本；
 - [ ] restricted token canary、Job Object 子孙进程、Checkout/TEMP ACL；
