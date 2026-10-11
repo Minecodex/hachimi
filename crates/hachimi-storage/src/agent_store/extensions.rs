@@ -169,7 +169,7 @@ impl AgentStore {
         skill_id: &SkillId,
         entries: &[SkillFileIndexRecord],
     ) -> Result<(), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         sqlx::query("DELETE FROM skill_file_index WHERE skill_id = ?")
             .bind(skill_id.as_str())
             .execute(&mut *transaction)
@@ -267,7 +267,7 @@ impl AgentStore {
         server_id: &McpServerId,
         tools: &[McpToolView],
     ) -> Result<(), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         sqlx::query("DELETE FROM mcp_discovered_tools WHERE server_id = ?")
             .bind(server_id.as_str())
             .execute(&mut *transaction)

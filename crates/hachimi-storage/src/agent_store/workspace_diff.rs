@@ -79,7 +79,7 @@ impl AgentStore {
         baseline_binary: bool,
         updated_at_ms: i64,
     ) -> Result<RunFileBaselineRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if let Some(row) =
             sqlx::query("SELECT * FROM run_file_baselines WHERE run_id = ? AND path_key = ?")
                 .bind(run_id.as_str())
@@ -451,7 +451,7 @@ impl AgentStore {
         checkout_id: &CheckoutId,
         snapshot: &RunDiffSnapshot,
     ) -> Result<(), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query("SELECT session_id, generation, status FROM runs WHERE id = ?")
             .bind(run_id.as_str())
             .fetch_optional(&mut *transaction)

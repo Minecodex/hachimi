@@ -31,6 +31,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
+#[path = "../src/test_support.rs"]
+mod test_support;
+
 #[derive(Debug)]
 struct ApproveExactParameters {
     store: AgentStore,
@@ -139,7 +142,7 @@ async fn mock_provider_drives_real_worker_and_persists_evidence_across_restart()
         system_runtime.clone(),
     );
     let project = workbench
-        .add_project(repository.path())
+        .add_project(test_support::fixture_root(&repository))
         .await
         .expect("project");
     let request = WorkbenchTaskStartRequest {

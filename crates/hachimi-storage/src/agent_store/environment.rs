@@ -198,7 +198,7 @@ impl AgentStore {
         &self,
         update: &SessionCheckoutBindingUpdate,
     ) -> Result<(SessionRecord, SessionEnvironmentState), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let current_revision = sqlx::query_scalar::<_, i64>(
             "SELECT binding_revision FROM session_environment_state WHERE session_id = ?",
         )

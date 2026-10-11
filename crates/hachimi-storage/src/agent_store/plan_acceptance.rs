@@ -32,7 +32,7 @@ impl AgentStore {
         run: &RunRecord,
         launch: Option<AtomicRunLaunchInput<'_>>,
     ) -> Result<(PlanDocument, PlanConfirmation, RunRecord), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if let Some(existing_id) = sqlx::query_scalar::<_, String>(
             "SELECT resource_id FROM idempotency_records WHERE principal = ? AND method = 'plan.accept' AND idempotency_key = ?",
         )

@@ -367,7 +367,7 @@ mod tests {
         for name in ["a.txt", "b.txt", "c.txt"] {
             std::fs::write(directory.path().join(name), name).expect("seed");
         }
-        let context = context(directory.path());
+        let context = context(crate::test_support::fixture_root(&directory));
         let WorkspaceOutput::DirectoryPage { page: first } = context
             .list_directory_page("", None, 2)
             .expect("first page")
@@ -392,7 +392,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("directory");
         let bytes = [0_u8, 1, 2, 3, 255];
         std::fs::write(directory.path().join("binary.dat"), bytes).expect("seed");
-        let context = context(directory.path());
+        let context = context(crate::test_support::fixture_root(&directory));
         let WorkspaceOutput::FileChunk { chunk } = context
             .read_file_chunk("binary.dat", 0, 0, None)
             .expect("chunk")
@@ -421,7 +421,7 @@ mod tests {
             "secret body",
         )
         .expect("seed");
-        let context = context(directory.path());
+        let context = context(crate::test_support::fixture_root(&directory));
         let WorkspaceOutput::FileSearch { snapshot } = context
             .fuzzy_file_search("agr", 20, FsSearchId::random(), 4)
             .expect("search")

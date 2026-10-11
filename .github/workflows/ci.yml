@@ -4,9 +4,24 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      full:
+        type: boolean
+        default: false
+        description: Include full desktop motion and lifecycle acceptance
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   windows-static:
@@ -32,6 +47,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: actions/setup-node@v4
         with:
           node-version: 24.10.0
@@ -69,11 +86,20 @@ jobs:
       - run: pnpm test:packages
       - run: pnpm storybook:build
       - run: pnpm test:visual
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: windows-ui-failure
+          path: packages/ui/test-results
+          retention-days: 7
       - run: pnpm release:check-clean
 
   windows-desktop:
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: ${{ inputs.full && 180 || 90 }}
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/desktop-e2e-build
+      HACHIMI_DESKTOP_E2E_PROFILE: ${{ inputs.full && 'release' || 'pr' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,7 +114,15 @@ jobs:
       - run: corepack prepare pnpm@11.15.1 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: pnpm test:desktop:e2e
+      - name: Run desktop E2E as a standard user
+        shell: powershell
+        run: ./scripts/ci/run-desktop-e2e-standard-user.ps1
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: windows-desktop-failure
+          path: target/desktop-e2e-artifacts
+          retention-days: 7
       - run: pnpm release:check-clean
 
   windows-non-admin:
@@ -159,3 +193,41 @@ jobs:
             HACHIMI_GIT_EXECUTABLE="/usr/bin/git" \
             target/debug/bundle/macos/Hachimi.app/Contents/MacOS/hachimi-desktop \
             --system-runtime-smoke
+
+  ci-gate:
+    name: CI
+    if: ${{ always() }}
+    needs:
+      [
+        "windows-static",
+        "windows-rust",
+        "windows-ui",
+        "windows-desktop",
+        "windows-non-admin",
+        "macos",
+      ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every mandatory job to succeed
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          optional = set([])
+          jobs = json.loads(os.environ["JOB_RESULTS"])
+          failed = {
+              name: job["result"]
+              for name, job in jobs.items()
+              if job["result"] != "success"
+              and not (name in optional and job["result"] == "skipped")
+          }
+          if failed:
+              print(f"Required CI jobs did not succeed: {failed}")
+              sys.exit(1)
+          print("All mandatory CI jobs passed.")
+          PY

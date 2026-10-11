@@ -3,6 +3,8 @@ import type {
   MotionRuntimeAsset,
   MotionTransitionProfile,
 } from "@hachimi/contracts";
+import { withMotionFeatureCacheBudget } from "./motion-feature-cache-budget";
+import { withMotionAssetLoadBudget } from "./motion-asset-load-budget";
 import type { VRM, VRMHumanBoneName } from "@pixiv/three-vrm";
 import { createVRMAnimationClip, type VRMAnimation } from "@pixiv/three-vrm-animation";
 import {
@@ -261,6 +263,7 @@ export class MotionAssetLibrary {
     private readonly loader: GLTFLoader,
     private readonly resolveAsset: (id: string) => Promise<MotionRuntimeAsset | null>,
     private readonly featureCache?: MotionFeatureCacheAdapter,
+    private readonly onAssetStage?: (id: string, stage: string) => void,
   ) {}
 
   setCatalog(entries: readonly MotionCatalogEntry[]): void {
@@ -334,7 +337,7 @@ export class MotionAssetLibrary {
     const cacheKey = `${skeletonSignature}:${motion.entry.sha256}:v${MOTION_FEATURE_VERSION}`;
     if (this.featureCache) {
       try {
-        const payload = await this.featureCache.read(cacheKey);
+        const payload = await withMotionFeatureCacheBudget(this.featureCache.read(cacheKey));
         const restored = payload ? deserializeMotionFeatureIndex(payload, cacheKey, id) : undefined;
         if (restored) {
           this.storeFeatureIndex(vrm, id, restored);
@@ -348,7 +351,9 @@ export class MotionAssetLibrary {
     if (!built) throw new Error(`Motion ${id} feature analysis failed`);
     if (this.featureCache) {
       try {
-        await this.featureCache.write(cacheKey, serializeMotionFeatureIndex(built));
+        await withMotionFeatureCacheBudget(
+          this.featureCache.write(cacheKey, serializeMotionFeatureIndex(built)),
+        );
       } catch {
         // Persistence is an optimization; the analyzed in-memory index remains authoritative.
       }
@@ -425,22 +430,55 @@ export class MotionAssetLibrary {
       this.sourceUse.set(id, ++this.useCounter);
       return existing;
     }
-    const pending = this.resolveAsset(id)
+    const entry = this.entries.get(id);
+    const parent = entry?.derivedFromMotionId
+      ? this.entries.get(entry.derivedFromMotionId)
+      : undefined;
+    if (entry && parent && entry.sha256 === parent.sha256) {
+      // Derived entries trim this same immutable VRMA at compile time. Reuse
+      // its parsed source rather than issuing a second native protocol fetch.
+      const shared = this.loadSource(parent.id);
+      this.sources.set(id, shared);
+      this.sourceUse.set(id, ++this.useCounter);
+      evictSources(this.sources, this.sourceUse, id);
+      return shared;
+    }
+    this.onAssetStage?.(id, "resolve");
+    const pending = withMotionAssetLoadBudget(this.resolveAsset(id), `${id} resolve`)
       .then(async (asset) => {
         if (!asset) throw new Error(`Unknown motion asset: ${id}`);
         this.entries.set(id, asset.entry);
-        const response = await fetch(asset.assetUrl, { cache: "force-cache" });
+        this.onAssetStage?.(id, "fetch");
+        const response = await withMotionAssetLoadBudget(
+          fetch(asset.assetUrl, { cache: "no-store", signal: AbortSignal.timeout(20_000) }),
+          `${id} fetch`,
+        );
         if (!response.ok) throw new Error(`Unable to read VRMA ${id} (${response.status})`);
-        const gltf = await this.loader.parseAsync(await response.arrayBuffer(), "");
+        this.onAssetStage?.(id, "bytes");
+        const bytes = await withMotionAssetLoadBudget(response.arrayBuffer(), `${id} bytes`);
+        this.onAssetStage?.(id, "parse");
+        const gltf = await withMotionAssetLoadBudget(
+          this.loader.parseAsync(bytes, ""),
+          `${id} parse`,
+        );
         const animations = gltf.userData["vrmAnimations"] as VRMAnimation[] | undefined;
         if (animations?.length !== 1) throw new Error(`VRMA ${id} must contain one animation`);
         this.sourceUse.set(id, ++this.useCounter);
         evictSources(this.sources, this.sourceUse, id);
+        this.onAssetStage?.(id, "ready");
         return animations[0]!;
       })
       .catch((error: unknown) => {
-        this.sources.delete(id);
-        this.sourceUse.delete(id);
+        this.onAssetStage?.(
+          id,
+          `failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        // Remove every alias of this failed load so derived motions can retry too.
+        for (const [motionId, source] of this.sources) {
+          if (source !== pending) continue;
+          this.sources.delete(motionId);
+          this.sourceUse.delete(motionId);
+        }
         throw error;
       });
     this.sources.set(id, pending);
@@ -593,9 +631,7 @@ export function deserializeMotionFeatureIndex(
             Number(amount),
           ]),
         ),
-        ...(pose["hips"]
-          ? { hipsPosition: vector3From(pose["hips"]) }
-          : {}),
+        ...(pose["hips"] ? { hipsPosition: vector3From(pose["hips"]) } : {}),
         ...(pose["lookAt"]
           ? {
               lookAt: {
@@ -662,7 +698,11 @@ function vector2From(value: unknown): Vector2 {
 }
 
 function requiredVector(value: unknown, width: number): number[] {
-  if (!Array.isArray(value) || value.length !== width || value.some((part) => !finiteNumberValue(part)))
+  if (
+    !Array.isArray(value) ||
+    value.length !== width ||
+    value.some((part) => !finiteNumberValue(part))
+  )
     throw new Error("Invalid motion feature vector");
   return value as number[];
 }

@@ -29,7 +29,9 @@ use super::{
     sandbox_sidecar_path, workspace_worker_path,
 };
 
-const INSPECT_TIMEOUT: Duration = Duration::from_secs(20);
+// Inspection performs three sequential Git commands, each with a 20-second
+// subprocess limit. The outer budget also includes the cold Workspace worker.
+const INSPECT_TIMEOUT: Duration = Duration::from_secs(65);
 const MUTATE_TIMEOUT: Duration = Duration::from_secs(30);
 const INITIAL_COMMIT_METHOD: &str = "project.git.create_empty_initial_commit";
 
@@ -194,14 +196,18 @@ pub(super) async fn inspect_project_git_state(
                 "workspace worker did not return project Git state",
             ));
         }
-        Err(error) => ProjectGitSnapshot {
-            project_id: project.id.clone(),
-            git_root: project.git_root.clone(),
-            state: ProjectGitState::Unavailable {
-                error_code: format!("workspace_{:?}", error.code).to_lowercase(),
-            },
-            observed_at_ms: i64::try_from(epoch_millis()).unwrap_or(i64::MAX),
-        },
+        Err(error) => {
+            tracing::warn!(code = ?error.code, message = %error.message,
+                project_id = %project.id.as_str(), "Project Git inspection failed");
+            ProjectGitSnapshot {
+                project_id: project.id.clone(),
+                git_root: project.git_root.clone(),
+                state: ProjectGitState::Unavailable {
+                    error_code: format!("workspace_{:?}", error.code).to_lowercase(),
+                },
+                observed_at_ms: i64::try_from(epoch_millis()).unwrap_or(i64::MAX),
+            }
+        }
     };
     if !matches!(snapshot.state, ProjectGitState::Unavailable { .. }) {
         state

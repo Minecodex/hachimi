@@ -49,6 +49,7 @@ export function MotionLabPage() {
   const [transitionMatrix, setTransitionMatrix] = createSignal<MotionTransitionMatrixCell[]>([]);
   const [matrixProgress, setMatrixProgress] = createSignal({ completed: 0, total: 0 });
   const [matrixRunning, setMatrixRunning] = createSignal(false);
+  const [assetStage, setAssetStage] = createSignal("");
   const [playing, setPlaying] = createSignal(true);
   const [speed, setSpeed] = createSignal(1);
   const [frame, setFrame] = createSignal<MotionLabFrame>();
@@ -70,7 +71,10 @@ export function MotionLabPage() {
 
   onMount(async () => {
     if (!stage) return;
-    runtime = new MotionLabRuntime(stage, { visualMode: "diagnostics" });
+    runtime = new MotionLabRuntime(stage, {
+      visualMode: "diagnostics",
+      onAssetStage: (id, phase) => setAssetStage(`${id}: ${phase}`),
+    });
     runtime.setFrameListener(setFrame);
     try {
       const [avatarCatalog, motionCatalog] = await Promise.all([
@@ -161,7 +165,12 @@ export function MotionLabPage() {
   }
 
   return (
-    <div class="motion-lab-page" data-testid="motion-lab-v5">
+    <div
+      class="motion-lab-page"
+      data-testid="motion-lab-v5"
+      data-transition-ready={Boolean(transitionDiagnostic())}
+      data-motion-asset-stage={assetStage()}
+    >
       <PageHeading
         class="motion-lab-header"
         eyebrow="Avatar Motion Runtime V5"

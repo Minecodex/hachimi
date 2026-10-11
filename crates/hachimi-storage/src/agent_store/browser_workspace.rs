@@ -45,7 +45,7 @@ pub struct BrowserDownloadRuntimeUpdate {
 impl AgentStore {
     pub async fn reconcile_browser_startup(&self) -> Result<(), AgentStoreError> {
         let now = now_ms();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         sqlx::query(
             "UPDATE browser_automation_leases SET status = 'expired', revision = revision + 1, updated_at_ms = ? WHERE status IN ('pending', 'active', 'suspended')",
         )
@@ -271,7 +271,7 @@ impl AgentStore {
         to: BrowserAutomationLeaseStatus,
     ) -> Result<BrowserWorkspace, AgentStoreError> {
         let now = now_ms();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         require_workspace_revision(&mut transaction, workspace_id, expected_workspace_revision)
             .await?;
         let lease_id = sqlx::query_scalar::<_, String>(
@@ -313,7 +313,7 @@ impl AgentStore {
         tab_id: &BrowserTabId,
     ) -> Result<Option<BrowserWorkspace>, AgentStoreError> {
         let now = now_ms();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query(
             "SELECT workspace_id, id FROM browser_automation_leases WHERE tab_id = ? AND status = 'active' AND expires_at_ms > ? ORDER BY updated_at_ms DESC, id ASC LIMIT 1",
         )
@@ -386,7 +386,7 @@ impl AgentStore {
         let workspace_id = BrowserWorkspaceId::random();
         let tab_id = BrowserTabId::random();
         let initial_url = normalized_persisted_url(initial_url.unwrap_or(NEW_TAB_URL));
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let inserted = sqlx::query(
             "INSERT OR IGNORE INTO browser_workspaces(id, owner_session_id, profile_id, active_tab_id, runtime_state, revision, created_at_ms, updated_at_ms) VALUES(?, ?, ?, NULL, 'dormant', 1, ?, ?)",
         )
@@ -475,7 +475,7 @@ impl AgentStore {
         let now = now_ms();
         let tab_id = BrowserTabId::random();
         let url = normalized_persisted_url(url.unwrap_or(NEW_TAB_URL));
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         require_workspace_revision(&mut transaction, workspace_id, expected_revision).await?;
         sqlx::query(
             "INSERT INTO browser_tabs(id, workspace_id, url, title, loading, can_go_back, can_go_forward, runtime_loaded, revision, input_epoch, created_at_ms, updated_at_ms) VALUES(?, ?, ?, '', 0, 0, 0, 0, 1, 1, ?, ?)",
@@ -506,7 +506,7 @@ impl AgentStore {
         expected_revision: u64,
     ) -> Result<BrowserWorkspace, AgentStoreError> {
         let now = now_ms();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         require_workspace_revision(&mut transaction, workspace_id, expected_revision).await?;
         require_tab(&mut transaction, workspace_id, tab_id).await?;
         bump_workspace(
@@ -528,7 +528,7 @@ impl AgentStore {
         expected_revision: u64,
     ) -> Result<BrowserWorkspace, AgentStoreError> {
         let now = now_ms();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         require_workspace_revision(&mut transaction, workspace_id, expected_revision).await?;
         require_tab(&mut transaction, workspace_id, tab_id).await?;
         sqlx::query("DELETE FROM browser_tabs WHERE id = ? AND workspace_id = ?")
@@ -600,7 +600,7 @@ impl AgentStore {
         update: BrowserTabRuntimeUpdate,
     ) -> Result<BrowserWorkspace, AgentStoreError> {
         let now = now_ms();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query("SELECT * FROM browser_tabs WHERE id = ? AND workspace_id = ?")
             .bind(tab_id.as_str())
             .bind(workspace_id.as_str())

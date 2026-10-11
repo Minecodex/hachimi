@@ -118,10 +118,18 @@ Git fetch/push 通过 `WorkspaceHostClient` 与固定解析的系统 Git 执行�
 
 ## Windows 与发布
 
-`windows-release-gate.yml` 只构建一次 MSI、NSIS 和便携 ZIP。alpha 的 NSIS 和源码版本保持 `0.3.0-alpha.N`；由于 Wix/MSI 只接受数值 prerelease，MSI 打包阶段使用确定性 `0.3.0-N` overlay，artifact manifest 仍绑定完整源码版本、commit 和三类包哈希。手动运行默认 `candidate_only: true`，只生成不可变候选并跳过已后置的 standard-user/elevated 身份 Gate；显式关闭该输入或正式 push/tag 流程才会进入两类身份 Gate。standard-user 与 elevated Runner 下载同一候选并重新哈希；前者必须是真实非 Administrators、未提升的交互账户并执行 `v0.2.0 → 候选`，后者必须是真正提升的交互管理员环境。NSIS 安装目录、MSI administrative image 和便携 ZIP 都会按源文件 SHA-256 验证 Apache LICENSE、根 NOTICE、默认 VRM/动作许可、语音第三方 NOTICE、模型许可及默认 VRM 本体，不能只依赖 Tauri 配置声明。
+`windows-release-gate.yml` 在 GitHub 托管 Windows 上复用同一提交的完整 CI，再构建一次 MSI、NSIS 和便携 ZIP。不可变 manifest 绑定实际版本、commit 和三类包哈希；包校验、源码与许可检查仍执行。Actions 只证明托管软件及候选制品范围，不证明真实安装升级身份、签名浏览器身份或外部组织接入。
 
-确定性 Desktop E2E 在 `target/desktop-e2e-tools/` 使用固定 `tauri-driver 2.0.6` 和与 Runner 已安装 Edge 精确匹配的 Microsoft Edge WebDriver。准备脚本校验 driver 版本、Microsoft Authenticode 签名和本地 SHA-256 manifest；缓存被安全清理后可重新获取，不要求 Runner 长期保留多套 driver。managed Chromium 已展开目录若仍通过逐文件 manifest 校验，也不再要求同时保留额外下载 ZIP。
+真实 standard-user/elevated 安装升级保留 `scripts/test-windows-release.ps1` 等独立入口；下载或复制同一候选后重新校验版本和哈希。它们需要实际交互用户、安装环境及前一版本，后续独立环境具备时执行。原有各安装路径中的 LICENSE、NOTICE、默认 VRM/动作和语音资源校验保持有效。
 
-`publish-alpha-prerelease.yml` 只接受 `Windows Release Gate` 中已经成功的 `build-candidate` 作业产物，重新校验候选 commit/version/hash/source/license 后创建 alpha prerelease。alpha 发布说明固定声明不携带真实 OpenAI、Forge、企业组织或两类 Windows 身份 Gate 的通过结论，不能作为 RC/GA 证据；已有 tag 永不覆盖，失败后必须递增 alpha 序号。
+`External Staging Gate` 和 `Publish Verified RC or GA` 已从 GitHub Actions 移除，不再要求 Actions Runner 标签、Environment、外部平台 Secret 或专用主机。前面的 OpenAI、Forge、企业及 Channel 协议测试与本地 staging 命令仍保留；缺少真实环境时明确记录待验证。
 
-`publish-release.yml` 仅处理 RC/GA，需要成功的 Windows run ID、外部 staging run ID、全新 tag 和 channel。它下载六类原始 summary 与候选，验证同一 commit/version/artifact/source/license 和证据时效后才调用 `gh release create`。已有 tag 永不覆盖；Gate 失败需递增 RC 序号。发布页固定说明 Windows 二进制未签名，以及默认 VRM 使官方包只能非商业发行。
+六类独立证据仍由同一校验器检查候选归属、失败/跳过、实际哈希、源码漂移及证据时效：
+
+```sh
+node scripts/release/verify-evidence.mjs --root target/independent-release-evidence --required openai,forge,enterprise,channels,windows_standard_user,windows_elevated --artifact-manifest target/release-candidate/artifact-manifest.json --expected-version YOUR_VERSION --expected-commit YOUR_COMMIT --output release-manifest.json
+```
+
+后续正式环境认证与 RC/GA 发布使用独立的证据和操作流程。没有这些环境证据时，不把候选制品或受控 CI 的成功作为真实环境认证。
+
+`publish-alpha-prerelease.yml` 继续只接受已成功的 Windows 候选构建，核对源码 CI、commit/version/hash/source/license 后创建不可变 alpha prerelease；不要求专用发布 Environment。跨平台 beta 同样先通过完整托管 CI 再生成两种原生候选。alpha/beta 不携带六类真实环境 Gate 的通过结论，既有 tag 不得覆盖。

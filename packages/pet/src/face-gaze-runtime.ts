@@ -178,12 +178,7 @@ export class FaceGazeRuntime {
       nowMs >= this.headFollowAfter
         ? this.targetPitch * CURSOR_GAZE_PROFILE.headPitchShare
         : this.headPitch;
-    this.headYaw = damp(
-      this.headYaw,
-      headYawTarget,
-      CURSOR_GAZE_PROFILE.headDamping,
-      deltaSeconds,
-    );
+    this.headYaw = damp(this.headYaw, headYawTarget, CURSOR_GAZE_PROFILE.headDamping, deltaSeconds);
     this.headPitch = damp(
       this.headPitch,
       headPitchTarget,

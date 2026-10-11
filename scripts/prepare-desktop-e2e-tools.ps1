@@ -1,6 +1,7 @@
 param(
     [string]$Destination = "target/desktop-e2e-tools",
-    [string]$TauriDriverVersion = "2.0.6"
+    [string]$TauriDriverVersion = "2.0.6",
+    [switch]$InspectRuntime
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,17 +21,33 @@ if (-not $destinationPath.StartsWith($targetPrefix, [StringComparison]::OrdinalI
     throw "desktop_e2e_tools_destination_invalid"
 }
 
-function Get-EdgeExecutable {
-    $candidates = @(
-        (Join-Path ${env:ProgramFiles(x86)} "Microsoft\Edge\Application\msedge.exe"),
-        (Join-Path $env:ProgramFiles "Microsoft\Edge\Application\msedge.exe")
+function Get-WebViewRuntimeExecutable {
+    $runtimeRoots = @(
+        (Join-Path ${env:ProgramFiles(x86)} "Microsoft\EdgeWebView\Application"),
+        (Join-Path $env:ProgramFiles "Microsoft\EdgeWebView\Application"),
+        (Join-Path $env:LOCALAPPDATA "Microsoft\EdgeWebView\Application")
     )
-    foreach ($candidate in $candidates) {
-        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
-            return $candidate
+    $candidates = foreach ($runtimeRoot in $runtimeRoots) {
+        if (Test-Path -LiteralPath $runtimeRoot -PathType Container) {
+            foreach ($directory in Get-ChildItem -LiteralPath $runtimeRoot -Directory) {
+                $candidate = Join-Path $directory.FullName "msedgewebview2.exe"
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                    $version = (Get-Item -LiteralPath $candidate).VersionInfo.FileVersion
+                    if ($version -match '^\d+\.\d+\.\d+\.\d+$') {
+                        [pscustomobject]@{ Path = $candidate; Version = [version]$version }
+                    }
+                }
+            }
         }
     }
-    throw "desktop_e2e_edge_missing"
+    $runtime = $candidates | Sort-Object Version -Descending | Select-Object -First 1
+    if (-not $runtime) { throw "desktop_e2e_webview_runtime_missing" }
+    $signature = Get-AuthenticodeSignature -LiteralPath $runtime.Path
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+        throw "desktop_e2e_webview_runtime_signature_invalid"
+    }
+    return $runtime.Path
 }
 
 function Assert-MicrosoftDriver {
@@ -52,10 +69,15 @@ function Assert-MicrosoftDriver {
     }
 }
 
-$edgeExecutable = Get-EdgeExecutable
-$edgeVersion = (Get-Item -LiteralPath $edgeExecutable).VersionInfo.FileVersion
+$webviewExecutable = Get-WebViewRuntimeExecutable
+$webviewRuntimeDirectory = Split-Path -Parent $webviewExecutable
+$edgeVersion = (Get-Item -LiteralPath $webviewExecutable).VersionInfo.FileVersion
 if ($edgeVersion -notmatch '^\d+\.\d+\.\d+\.\d+$') {
     throw "desktop_e2e_edge_version_invalid"
+}
+if ($InspectRuntime) {
+    Write-Output "WebView2 Runtime $edgeVersion at $webviewRuntimeDirectory"
+    return
 }
 $tauriDriver = Join-Path $destinationPath "bin\tauri-driver.exe"
 $edgeDriver = Join-Path $destinationPath "msedgedriver.exe"
@@ -71,6 +93,7 @@ if ((Test-Path -LiteralPath $manifestPath -PathType Leaf) -and
             (Get-FileHash -LiteralPath $tauriDriver -Algorithm SHA256).Hash -eq $manifest.tauriDriverSha256
         if ($manifest.tauriDriverVersion -eq $TauriDriverVersion -and
             $manifest.edgeDriverVersion -eq $edgeVersion -and
+            $manifest.webviewRuntimeDirectory -eq $webviewRuntimeDirectory -and
             (Get-FileHash -LiteralPath $tauriDriver -Algorithm SHA256).Hash -eq $manifest.tauriDriverSha256 -and
             (Get-FileHash -LiteralPath $edgeDriver -Algorithm SHA256).Hash -eq $manifest.edgeDriverSha256) {
             Assert-MicrosoftDriver -Path $edgeDriver -ExpectedVersion $edgeVersion
@@ -124,6 +147,7 @@ try {
         tauriDriverVersion = $TauriDriverVersion
         tauriDriverSha256 = (Get-FileHash -LiteralPath $tauriDriver -Algorithm SHA256).Hash.ToLowerInvariant()
         edgeDriverVersion = $edgeVersion
+        webviewRuntimeDirectory = $webviewRuntimeDirectory
         edgeDriverSha256 = (Get-FileHash -LiteralPath $edgeDriver -Algorithm SHA256).Hash.ToLowerInvariant()
         edgeDriverCanonicalUrl = $edgeUrl
         acquiredAtUtc = [DateTime]::UtcNow.ToString("o")

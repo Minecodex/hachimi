@@ -1,4 +1,8 @@
-import type { MotionIntentRequest, MotionTransitionProfile } from "@hachimi/contracts";
+import type {
+  BehaviorChannel,
+  MotionIntentRequest,
+  MotionTransitionProfile,
+} from "@hachimi/contracts";
 import {
   type AnimationGraphSubmitOptions,
   channelWeightsFromIntent,
@@ -94,15 +98,15 @@ export class AnimationGraph {
     const waitMs = this.transitionWaitMs(intent, nowMs, maximumWaitMs);
     node.startedAt = nowMs + waitMs;
     node.activateAt = nowMs + waitMs;
-    node.transitionStartedAt =
-      node.activateAt - Math.max(options.transitionElapsedMs ?? 0, 0);
+    node.transitionStartedAt = node.activateAt - Math.max(options.transitionElapsedMs ?? 0, 0);
     node.lastUpdatedAt = node.activateAt;
     return true;
   }
 
   updateIntent(intent: MotionIntentRequest): boolean {
     const node = this.nodes.get(intent.requestId);
-    if (!node || node.entry.id !== intent.motionId || node.intent.slot !== intent.slot) return false;
+    if (!node || node.entry.id !== intent.motionId || node.intent.slot !== intent.slot)
+      return false;
     node.intent = intent;
     return true;
   }
@@ -186,7 +190,10 @@ export class AnimationGraph {
       if (!index) continue;
       this.advancePlayback(node, nowMs);
       const localTime = node.playbackTimeMs;
-      const frame = index.frames[Math.min(Math.round((localTime / 1_000) * index.sampleHz), index.frames.length - 1)];
+      const frame =
+        index.frames[
+          Math.min(Math.round((localTime / 1_000) * index.sampleHz), index.frames.length - 1)
+        ];
       if (frame?.safeExit) safe.add(slot);
     }
     return safe;
@@ -217,8 +224,7 @@ export class AnimationGraph {
     if (nowMs <= node.lastUpdatedAt || nowMs < node.activateAt) return;
     const elapsed = nowMs - node.lastUpdatedAt;
     const speed = node.intent.locomotion?.desiredSpeed;
-    const playbackRate =
-      speed == null ? 1 : Math.min(Math.max(Math.abs(speed) / 0.28, 0.65), 1.25);
+    const playbackRate = speed == null ? 1 : Math.min(Math.max(Math.abs(speed) / 0.28, 0.65), 1.25);
     node.playbackTimeMs += elapsed * playbackRate;
     node.lastUpdatedAt = nowMs;
   }
@@ -246,8 +252,8 @@ function profileHalfLives(profile: MotionTransitionProfile) {
 }
 
 function effectiveChannelMask(
-  entry: readonly import("@hachimi/contracts").BehaviorChannel[],
-  profile: readonly import("@hachimi/contracts").BehaviorChannel[],
+  entry: readonly BehaviorChannel[],
+  profile: readonly BehaviorChannel[],
 ) {
   if (profile.includes("full_body")) return [...entry];
   if (entry.includes("full_body")) return [...profile];

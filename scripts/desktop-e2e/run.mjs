@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import {
   createWriteStream,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -15,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { buildDesktopE2e, verifyDesktopE2eBuild } from "./support/build.mjs";
 import { createOfficeArtifact } from "./support/office-artifacts.mjs";
 import { cleanupExecutableProcesses, terminateProcessTree } from "./support/processes.mjs";
 
@@ -40,13 +42,6 @@ async function allocateLoopbackPorts(count) {
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const corepackCli = join(
-  dirname(process.execPath),
-  "node_modules",
-  "corepack",
-  "dist",
-  "corepack.js",
-);
 const temporaryRoot = mkdtempSync(join(tmpdir(), "hachimi-desktop-e2e-"));
 const project = join(temporaryRoot, "project");
 const data = join(temporaryRoot, "data");
@@ -65,10 +60,23 @@ if (!existsSync(driver) || !existsSync(nativeDriver)) {
     `Desktop E2E drivers are missing. Set TAURI_DRIVER and MSEDGEDRIVER, or provision ${driver} and ${nativeDriver}.`,
   );
 }
+const driverManifest = JSON.parse(
+  readFileSync(join(root, "target/desktop-e2e-tools/manifest.json"), "utf8"),
+);
+const webviewRuntimeDirectory = driverManifest.webviewRuntimeDirectory;
+if (
+  typeof webviewRuntimeDirectory !== "string" ||
+  !existsSync(join(webviewRuntimeDirectory, "msedgewebview2.exe"))
+) {
+  throw new Error("Desktop E2E WebView2 runtime is missing from the prepared driver manifest.");
+}
 mkdirSync(project, { recursive: true });
 mkdirSync(data, { recursive: true });
 writeFileSync(join(data, ".hachimi-data-root"), "com.hachimi.desktop", "utf8");
-if (process.env.HACHIMI_DESKTOP_E2E_SPEC?.includes("avatar-motion-v5.e2e.mjs")) {
+if (
+  !process.env.HACHIMI_DESKTOP_E2E_SPEC ||
+  process.env.HACHIMI_DESKTOP_E2E_SPEC.includes("avatar-motion-v5.e2e.mjs")
+) {
   seedAvatarMotionV5Fixtures(root, data);
 }
 const loopbackToken = "hachimi-desktop-e2e-loopback-token-00000001";
@@ -550,7 +558,7 @@ if (!mcpAddress || typeof mcpAddress === "string")
 const mcpUrl = `http://127.0.0.1:${mcpAddress.port}/mcp`;
 const browserFixtureUrl = `http://127.0.0.1:${mcpAddress.port}/browser-fixture`;
 const browserFixtureOrigin = `http://127.0.0.1:${mcpAddress.port}`;
-const [gatewayPort, gatewayWakePort] = await allocateLoopbackPorts(2);
+const [gatewayPort, gatewayWakePort, debugPort] = await allocateLoopbackPorts(3);
 
 function checked(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -589,11 +597,14 @@ const activeChildren = new Set();
 
 const testEnvironment = {
   ...process.env,
+  WEBVIEW2_BROWSER_EXECUTABLE_FOLDER: webviewRuntimeDirectory,
   CARGO_NET_OFFLINE: "true",
   CARGO_TARGET_DIR: buildTarget,
   TAURI_CONFIG: JSON.stringify({ build: { devUrl: null } }),
   HACHIMI_DATA_DIR: data,
   HACHIMI_DESKTOP_E2E_WEBVIEW_DATA: webviewData,
+  HACHIMI_DESKTOP_E2E_ATTACH: "1",
+  HACHIMI_DESKTOP_E2E_DEBUG_PORT: String(debugPort),
   HACHIMI_DESKTOP_E2E_PROJECT_PATH: project,
   HACHIMI_SYSTEM_RUNTIME_TEST_GIT_GATE: systemGitGate,
   HACHIMI_DESKTOP_E2E_ATTACHMENT_PATH: attachment,
@@ -612,9 +623,12 @@ const testEnvironment = {
   HACHIMI_MANAGED_CHROMIUM: join(root, "apps/desktop/src-tauri/managed-chromium/chrome.exe"),
 };
 
-checked("node", ["scripts/prepare-workspace-worker.mjs", "dev"], {
-  env: testEnvironment,
-});
+if (process.env.HACHIMI_DESKTOP_E2E_PREBUILT === "1") {
+  verifyDesktopE2eBuild();
+} else {
+  buildDesktopE2e(testEnvironment);
+}
+console.log(`Desktop E2E WebView2 Runtime ${driverManifest.edgeDriverVersion}`);
 if (process.env.HACHIMI_DESKTOP_E2E_REAL_SANDBOX === "1") {
   delete testEnvironment.HACHIMI_DESKTOP_E2E_SANDBOX;
   const e2eDebugRoot = join(buildTarget, "debug");
@@ -623,32 +637,6 @@ if (process.env.HACHIMI_DESKTOP_E2E_REAL_SANDBOX === "1") {
   const marker = join(data, "sandbox/windows/setup.json");
   checked(setup, ["--marker", marker, "--launcher", launcher], { env: testEnvironment });
 }
-checked(process.execPath, [corepackCli, "pnpm", "--dir", "apps/desktop/web", "build"], {
-  env: testEnvironment,
-});
-const desktopPdb = join(buildTarget, "debug", "deps", "hachimi_desktop.pdb");
-if (!desktopPdb.startsWith(`${buildTarget}${sep}`)) {
-  throw new Error("Desktop E2E PDB path escaped the dedicated build directory.");
-}
-// MSVC can retain exhausted type-server state when repeatedly relinking this
-// large debug binary. The PDB is a disposable E2E build artifact; recreating
-// just this file avoids LNK1318 without cleaning any source or shared target.
-rmSync(desktopPdb, { force: true });
-checked(
-  process.execPath,
-  [
-    "scripts/run-with-rust.mjs",
-    "cargo",
-    "build",
-    "--offline",
-    "-p",
-    "hachimi-desktop",
-    "--features",
-    "desktop-e2e",
-  ],
-  { env: testEnvironment },
-);
-
 testEnvironment.HACHIMI_DESKTOP_E2E_APP = resolve(buildTarget, "debug/hachimi-desktop.exe");
 const consoleStopFile = join(artifacts, "console-window-monitor.stop");
 const consoleReportFile = join(artifacts, "console-window-monitor.json");
@@ -747,6 +735,10 @@ try {
     }
   }
   driverLog.end();
+  const applicationLogs = join(data, "logs");
+  if (existsSync(applicationLogs)) {
+    cpSync(applicationLogs, join(artifacts, "application-logs"), { recursive: true });
+  }
   await new Promise((resolveClose) => mcpServer.close(resolveClose));
   if (succeeded && process.env.HACHIMI_KEEP_DESKTOP_E2E !== "1") {
     rmSync(temporaryRoot, { recursive: true, force: true });

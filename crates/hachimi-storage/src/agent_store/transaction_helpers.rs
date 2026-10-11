@@ -1,5 +1,20 @@
 use super::*;
 
+impl AgentStore {
+    // Desktop and Gateway have separate pools sharing one WAL database.
+    // Reserve the writer before reading mutable state: busy_timeout cannot
+    // repair a deferred transaction whose snapshot another writer superseded.
+    pub(super) async fn begin_write(
+        &self,
+    ) -> Result<Transaction<'static, Sqlite>, AgentStoreError> {
+        Ok(self.pool.begin_with(SQLITE_BEGIN_IMMEDIATE).await?)
+    }
+}
+
+#[cfg(test)]
+#[path = "writer_transaction_tests.rs"]
+mod writer_transaction_tests;
+
 pub(super) async fn next_sequence_tx(
     transaction: &mut Transaction<'_, Sqlite>,
     session_id: &SessionId,

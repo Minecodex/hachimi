@@ -1,3 +1,6 @@
+#[path = "../src/test_support.rs"]
+mod test_support;
+
 use std::time::Duration;
 
 use hachimi_protocol::{DiffScope, FsSearchId, SessionId};
@@ -72,6 +75,7 @@ impl WorkspaceLaunchGuard for AllowReleaseSmokeLaunch {
 #[tokio::test]
 async fn client_reads_through_the_worker_process() {
     let directory = tempfile::tempdir().expect("directory");
+    crate::test_support::fixture_root(&directory);
     std::fs::write(directory.path().join("demo.txt"), "hello worker").expect("seed");
     let client = WorkspaceHostClient::new(
         env!("CARGO_BIN_EXE_hachimi-workspace-worker"),
@@ -98,8 +102,11 @@ async fn client_reads_through_the_worker_process() {
 #[tokio::test]
 async fn absolute_paths_use_explicit_roots_and_full_access_but_reject_escape() {
     let workspace = tempfile::tempdir().expect("workspace");
+    crate::test_support::fixture_root(&workspace);
     let external = tempfile::tempdir().expect("external root");
+    crate::test_support::fixture_root(&external);
     let outside = tempfile::tempdir().expect("outside root");
+    crate::test_support::fixture_root(&outside);
     std::fs::write(external.path().join("allowed.txt"), "allowed").expect("allowed file");
     std::fs::write(outside.path().join("blocked.txt"), "blocked").expect("blocked file");
 
@@ -207,6 +214,7 @@ async fn restricted_workspace_worker_executes_a_checkout_bound_write() {
     );
 
     let directory = tempfile::tempdir().expect("checkout");
+    crate::test_support::fixture_root(&directory);
     let worker = release_worker_binary();
     let session_id = SessionId::random();
     let run_id = RunId::random();
@@ -304,6 +312,7 @@ async fn restricted_workspace_worker_creates_an_empty_initial_commit_without_tou
     );
 
     let directory = tempfile::tempdir().expect("unborn Git checkout");
+    crate::test_support::fixture_root(&directory);
     let git_lease = test_git_lease().await;
     let git_program = git_lease.executable().to_path_buf();
     let git = |args: &[&str]| {
@@ -447,6 +456,7 @@ async fn restricted_agent_exec_tool_runs_through_policy_and_workspace_sandbox() 
     );
 
     let directory = tempfile::tempdir().expect("agent Exec checkout");
+    crate::test_support::fixture_root(&directory);
     let worker = release_worker_binary();
     let powershell = std::path::PathBuf::from(
         std::env::var_os("SystemRoot").expect("SystemRoot must be available"),
@@ -575,6 +585,7 @@ async fn restricted_agent_exec_tool_runs_through_policy_and_workspace_sandbox() 
 #[tokio::test]
 async fn cancelled_request_does_not_launch_a_worker() {
     let directory = tempfile::tempdir().expect("directory");
+    crate::test_support::fixture_root(&directory);
     let client = WorkspaceHostClient::new(
         env!("CARGO_BIN_EXE_hachimi-workspace-worker"),
         directory.path(),
@@ -597,6 +608,7 @@ async fn cancelled_request_does_not_launch_a_worker() {
 #[tokio::test]
 async fn watch_server_reports_changes_and_stops_on_cancel() {
     let directory = tempfile::tempdir().expect("directory");
+    crate::test_support::fixture_root(&directory);
     std::fs::write(directory.path().join("demo.txt"), "before").expect("seed");
     let client = WorkspaceHostClient::new(
         env!("CARGO_BIN_EXE_hachimi-workspace-worker"),
@@ -630,6 +642,7 @@ async fn watch_server_reports_changes_and_stops_on_cancel() {
 #[tokio::test]
 async fn search_session_updates_generation_without_spawning_a_second_session() {
     let directory = tempfile::tempdir().expect("directory");
+    crate::test_support::fixture_root(&directory);
     for index in 0..600 {
         std::fs::write(
             directory.path().join(format!("alpha-beta-{index:04}.rs")),
@@ -682,6 +695,7 @@ async fn search_session_updates_generation_without_spawning_a_second_session() {
 #[tokio::test]
 async fn structured_diff_is_returned_per_file() {
     let directory = tempfile::tempdir().expect("directory");
+    crate::test_support::fixture_root(&directory);
     git(directory.path(), &["init", "-b", "main"]);
     git(
         directory.path(),
@@ -724,6 +738,7 @@ async fn structured_diff_is_returned_per_file() {
 #[tokio::test]
 async fn git_workspace_snapshot_is_safe_through_the_worker_process() {
     let directory = tempfile::tempdir().expect("directory");
+    crate::test_support::fixture_root(&directory);
     git(directory.path(), &["init", "-b", "main"]);
     git(
         directory.path(),
@@ -766,6 +781,7 @@ async fn git_workspace_snapshot_is_safe_through_the_worker_process() {
 #[tokio::test]
 async fn repository_textconv_cannot_execute_during_read_only_diff() {
     let directory = tempfile::tempdir().expect("directory");
+    crate::test_support::fixture_root(&directory);
     let (textconv_command, textconv_marker) = textconv_canary(directory.path());
     git(directory.path(), &["init", "-b", "main"]);
     git(
@@ -867,6 +883,7 @@ fn textconv_canary(root: &std::path::Path) -> (String, std::path::PathBuf) {
 #[tokio::test]
 async fn checkout_diff_file_is_streamed_in_etagged_chunks() {
     let directory = tempfile::tempdir().expect("directory");
+    crate::test_support::fixture_root(&directory);
     git(directory.path(), &["init", "-b", "main"]);
     git(
         directory.path(),
@@ -1015,9 +1032,11 @@ mod macos_seatbelt {
     #[tokio::test]
     async fn restricted_workspace_worker_executes_a_checkout_bound_write() {
         let data = tempfile::tempdir().expect("data root");
+        crate::test_support::fixture_root(&data);
         let backend = enforced_backend(data.path());
 
         let directory = tempfile::tempdir().expect("checkout");
+        crate::test_support::fixture_root(&directory);
         let worker = std::path::PathBuf::from(env!("CARGO_BIN_EXE_hachimi-workspace-worker"));
         let canary = canary_path();
         let session_id = SessionId::random();

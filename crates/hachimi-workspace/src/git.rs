@@ -809,7 +809,13 @@ mod tests {
         run_git(fixture.path(), &["add", "tracked.txt"]);
         run_git(fixture.path(), &["commit", "-m", "initial"]);
         std::fs::write(fixture.path().join("tracked.txt"), "two\n").expect("update fixture");
-        let worker = WorkerContext::new(fixture.path(), "checkout", 1, "token").expect("worker");
+        let worker = WorkerContext::new(
+            crate::test_support::fixture_root(&fixture),
+            "checkout",
+            1,
+            "token",
+        )
+        .expect("worker");
 
         let WorkspaceOutput::GitWorkspaceSnapshot { snapshot } =
             worker.git_workspace_snapshot(10).await.expect("snapshot")
@@ -858,7 +864,13 @@ mod tests {
     async fn git_mutations_reject_checkout_escape_and_empty_commits() {
         let fixture = tempfile::tempdir().expect("fixture");
         run_git(fixture.path(), &["init"]);
-        let worker = WorkerContext::new(fixture.path(), "checkout", 1, "token").expect("worker");
+        let worker = WorkerContext::new(
+            crate::test_support::fixture_root(&fixture),
+            "checkout",
+            1,
+            "token",
+        )
+        .expect("worker");
         assert!(worker.git_stage(&["../escape".into()], 5).await.is_err());
         assert_eq!(
             worker
@@ -873,7 +885,13 @@ mod tests {
     #[tokio::test]
     async fn project_inspection_reconciles_unborn_and_empty_initial_commit_preserves_index() {
         let fixture = tempfile::tempdir().expect("fixture");
-        let worker = WorkerContext::new(fixture.path(), "checkout", 0, "token").expect("worker");
+        let worker = WorkerContext::new(
+            crate::test_support::fixture_root(&fixture),
+            "checkout",
+            0,
+            "token",
+        )
+        .expect("worker");
         let WorkspaceOutput::ProjectGitSnapshot { snapshot } = worker
             .git_project_inspect(ProjectId::from("project"))
             .await
@@ -955,7 +973,13 @@ mod tests {
         run_git(fixture.path(), &["commit", "-m", "initial"]);
         let remote_path = remote.path().to_string_lossy().into_owned();
         run_git(fixture.path(), &["remote", "add", "origin", &remote_path]);
-        let worker = WorkerContext::new(fixture.path(), "checkout", 1, "token").expect("worker");
+        let worker = WorkerContext::new(
+            crate::test_support::fixture_root(&fixture),
+            "checkout",
+            1,
+            "token",
+        )
+        .expect("worker");
         let WorkspaceOutput::GitRemotes { remotes } = worker.git_remotes().await.expect("remotes")
         else {
             panic!("unexpected remote output")

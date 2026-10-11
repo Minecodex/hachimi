@@ -90,6 +90,8 @@ Event 入口只接受 source/type/subject/最多 16 个 exact labels 和可选 t
 
 `CONTROL_PROTOCOL_VERSION = 31`。文件数据库发现 pending migration 后使用共享 `<database>.migrate.lock`，以 SQLite Online Backup API 生成同级备份、manifest 和 SHA-256，只保留最近三份；30 秒未取得锁返回 `database_migration_busy`，失败回滚事务、保留备份并拒绝启动。内存数据库不创建备份。Desktop 与 Gateway 复用同一实现。
 
+Desktop 与 Gateway 的独立连接池共享 WAL 数据库。修改状态的 Store 事务使用 `BEGIN IMMEDIATE`，通用入口为 `begin_write`，副作用 ledger 保留既有显式写事务。在读取待修改状态前取得写入资格，避免另一进程提交后出现 `SQLITE_BUSY_SNAPSHOT`；只读快照保持普通事务。事件序号、CAS、幂等和回滚边界不变，写事务不扩大到模型或 Host 副作用。
+
 不保留旧 `content_json`、旧 Profile 字段或 typed/untyped 双读。UUIDv7、append-only Transcript/Event、secret 不落盘和 TaskRun lineage 保持不变。
 
 ## 10. 当前 Host 参考边界

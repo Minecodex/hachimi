@@ -32,6 +32,7 @@ fn release_canary() -> String {
 #[test]
 fn windows_path_matrix_rejects_aliases_and_hard_links() {
     let directory = tempfile::tempdir().expect("directory");
+    assign_fixture_owner(directory.path());
     let root = validate_checkout_root(directory.path()).expect("NTFS root");
     std::fs::write(root.join("safe.txt"), "safe").expect("safe");
     assert!(resolve_checkout_path(&root, "safe.txt", PathAccess::Read, false).is_ok());
@@ -46,6 +47,7 @@ fn windows_path_matrix_rejects_aliases_and_hard_links() {
         );
     }
     if let Ok(other_drive) = tempfile::tempdir_in(std::env::current_dir().expect("current dir")) {
+        assign_fixture_owner(other_drive.path());
         let other_root =
             validate_checkout_root(other_drive.path()).expect("second local NTFS root");
         assert!(other_root.is_absolute());
@@ -158,6 +160,35 @@ fn windows_path_matrix_rejects_aliases_and_hard_links() {
             }
         }
     }
+}
+
+// Elevated hosted runners create directories owned by the Administrators
+// group. Production correctly requires the individual user SID, so establish
+// that precondition on these newly created fixtures without weakening it.
+fn assign_fixture_owner(path: &std::path::Path) {
+    match validate_checkout_root(path) {
+        Ok(_) => return,
+        Err(PathSecurityError::OwnershipMismatch) => {}
+        Err(error) => panic!("fresh fixture root failed validation: {error}"),
+    }
+    let system_directory =
+        std::path::PathBuf::from(std::env::var_os("SystemRoot").expect("Windows system directory"))
+            .join("System32");
+    let identity = std::process::Command::new(system_directory.join("whoami.exe"))
+        .output()
+        .expect("current fixture identity");
+    assert!(identity.status.success(), "could not resolve fixture owner");
+    let identity = String::from_utf8(identity.stdout).expect("fixture identity encoding");
+    let ownership = std::process::Command::new(system_directory.join("icacls.exe"))
+        .arg(path)
+        .args(["/setowner", identity.trim(), "/Q"])
+        .output()
+        .expect("assign current-user ownership to the fresh fixture");
+    assert!(
+        ownership.status.success(),
+        "fixture ownership assignment failed: {}",
+        String::from_utf8_lossy(&ownership.stderr)
+    );
 }
 
 fn create_junction(link: &std::path::Path, target: &std::path::Path) -> bool {

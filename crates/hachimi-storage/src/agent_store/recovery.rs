@@ -152,7 +152,7 @@ impl AgentStore {
         principal: &str,
         resolved_at_ms: i64,
     ) -> Result<RunRecoverySnapshot, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query("SELECT * FROM run_recoveries WHERE id = ?")
             .bind(request.recovery_id.as_str())
             .fetch_optional(&mut *transaction)

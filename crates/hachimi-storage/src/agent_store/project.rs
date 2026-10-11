@@ -106,7 +106,7 @@ impl AgentStore {
         attachment: &AttachmentRecord,
         managed_path: &Path,
     ) -> Result<AttachmentRecord, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         if let Some(row) = sqlx::query("SELECT * FROM attachments WHERE content_hash = ?")
             .bind(&attachment.content_hash)
             .fetch_optional(&mut *transaction)
@@ -148,7 +148,7 @@ impl AgentStore {
         run_id: &RunId,
         attachment_ids: &[AttachmentId],
     ) -> Result<(), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         for attachment_id in attachment_ids {
             let exists =
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM attachments WHERE id = ?")
@@ -176,7 +176,7 @@ impl AgentStore {
         run_id: &RunId,
         attachment_ids: &[AttachmentId],
     ) -> Result<(), AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query(
             "SELECT id, payload_json FROM transcript_items WHERE run_id = ? AND kind = 'user' ORDER BY sequence ASC LIMIT 1",
         )

@@ -20,8 +20,7 @@ export function selectMotionForIntent(
   const candidates = entries
     .filter(
       (entry) =>
-        entry.family === intent.family &&
-        (!intent.requireFingerMotion || entry.hasFingerMotion),
+        entry.family === intent.family && (!intent.requireFingerMotion || entry.hasFingerMotion),
     )
     .map((entry) => {
       const search = normalize(`${entry.name} ${entry.tags.join(" ")} ${entry.description}`);

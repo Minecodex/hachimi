@@ -781,7 +781,7 @@ impl AgentStore {
         session_id: &SessionId,
         timestamp_ms: i64,
     ) -> Result<u64, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let approvals = sqlx::query("UPDATE approval_requests SET status = 'cancelled', resolved_at_ms = ? WHERE session_id = ? AND status = 'approved' AND grant_scope = 'session'")
             .bind(timestamp_ms)
             .bind(session_id.as_str())

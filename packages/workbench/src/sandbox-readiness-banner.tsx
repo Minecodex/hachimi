@@ -72,9 +72,7 @@ export function SandboxReadinessBanner(props: {
         <AlertTriangle size={15} />
         <span class="sandbox-readiness-copy">
           <strong>
-            {zh()
-              ? "系统 Sandbox 尚未通过运行时验证"
-              : "OS sandbox is not runtime-attested"}
+            {zh() ? "系统 Sandbox 尚未通过运行时验证" : "OS sandbox is not runtime-attested"}
           </strong>
           <small>
             {report()?.stableErrorCode ?? "sandbox_not_enforced"}

@@ -172,7 +172,7 @@ impl AgentStore {
                     return Err(AgentStoreError::PluginHook(code));
                 }
             };
-            let mut transaction = self.pool.begin().await?;
+            let mut transaction = self.begin_write().await?;
             sqlx::query(
                 "INSERT INTO plugin_hook_executions(plugin_id, contribution_id, event, session_id, run_id, run_generation, subject_hash, result_code, created_at_ms) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )

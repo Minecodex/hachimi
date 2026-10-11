@@ -52,6 +52,7 @@ struct ManagerState {
     /// macOS prototype OSR mode (P4-A): render windowless, frames land in
     /// `frames_dir` for the desktop to composite.
     osr: bool,
+    #[cfg(target_os = "macos")]
     frames_dir: Option<PathBuf>,
     context_ready: bool,
     shutting_down: bool,
@@ -69,22 +70,18 @@ pub struct TabManager {
 }
 
 impl TabManager {
-    #[cfg(not(target_os = "macos"))]
-    pub fn new(parent_hwnd: usize, sink: EventSink) -> Self {
-        Self::new_with_osr(parent_hwnd, sink, false, None)
-    }
-
     pub fn new_with_osr(
         parent_hwnd: usize,
         sink: EventSink,
         osr: bool,
-        frames_dir: Option<PathBuf>,
+        _frames_dir: Option<PathBuf>,
     ) -> Self {
         Self {
             sink,
             state: Arc::new(Mutex::new(ManagerState {
                 osr,
-                frames_dir,
+                #[cfg(target_os = "macos")]
+                frames_dir: _frames_dir,
                 parent_hwnd,
                 ..ManagerState::default()
             })),
@@ -336,10 +333,9 @@ impl TabManager {
             width: i32::try_from(bounds.width).unwrap_or(i32::MAX),
             height: i32::try_from(bounds.height).unwrap_or(i32::MAX),
         };
-        let (osr, parent_hwnd) = {
-            let state = self.state.lock();
-            (state.osr, state.parent_hwnd)
-        };
+        let parent_hwnd = self.state.lock().parent_hwnd;
+        #[cfg(target_os = "macos")]
+        let osr = self.state.lock().osr;
         #[cfg(target_os = "windows")]
         let parent = sys::HWND(parent_hwnd as *mut sys::HWND__);
         #[cfg(not(target_os = "windows"))]
@@ -494,8 +490,11 @@ impl TabManager {
         if self.is_osr()
             && let Some(host) = host.as_ref()
         {
-            host.was_resized();
             host.notify_screen_info_changed();
+            host.was_resized();
+            // A Retina-to-1x transition can keep the logical viewport unchanged.
+            // Request a fresh paint after updating screen scale and view bounds.
+            host.invalidate(cef::PaintElementType::VIEW);
         }
         if let Some(window) = window {
             move_window(window, bounds);
@@ -1510,6 +1509,20 @@ wrap_render_handler! {
             let bounds = self.manager.tab_bounds(&self.tab_id);
             if let Some(info) = screen_info {
                 info.device_scale_factor = bounds.scale_factor;
+                let scale = bounds.scale_factor.max(0.5);
+                let logical = |physical: u32| {
+                    i32::try_from(((physical as f32) / scale).round().max(1.0) as u32)
+                        .unwrap_or(i32::MAX)
+                };
+                info.rect = Rect {
+                    x: 0,
+                    y: 0,
+                    width: logical(bounds.width),
+                    height: logical(bounds.height),
+                };
+                info.available_rect = info.rect.clone();
+                info.depth = 32;
+                info.depth_per_component = 8;
             }
             1
         }

@@ -254,7 +254,7 @@ fn multi_agent_response(request: &ModelRequest, expected_workload: &str) -> Resp
         return tool_call(
             "desktop-e2e-agent-wait",
             "agent.wait",
-            serde_json::json!({"timeoutMs": 10_000}),
+            serde_json::json!({"timeoutMs": 90_000}),
         );
     }
     if !completed(request, "agent.collect") {

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { clickWhenReady, hoverWhenReady, waitForDisplayed } from "../support/interactions.mjs";
 import { switchToWorkbench } from "../support/windows.mjs";
 
-/* global HTMLElement, document, getComputedStyle */
+/* global HTMLButtonElement, HTMLElement, document */
 
 async function clickDialogPrimary() {
   await clickWhenReady('[role="dialog"] .dialog-actions button:last-child');
@@ -13,31 +13,11 @@ async function openSkillActions(skillName) {
   const rowSelector = `[data-testid="skill-row-${skillName}"]`;
   const triggerSelector = `[data-testid="skill-actions-${skillName}"]`;
   await hoverWhenReady(rowSelector);
-  await browser.waitUntil(
-    async () =>
-      browser.execute(
-        (rowTarget, triggerTarget) => {
-          const row = document.querySelector(rowTarget);
-          const trigger = document.querySelector(triggerTarget);
-          if (!(row instanceof HTMLElement) || !(trigger instanceof HTMLElement)) return false;
-          row.focus();
-          trigger.focus();
-          const style = getComputedStyle(trigger);
-          const bounds = trigger.getBoundingClientRect();
-          return (
-            document.activeElement === trigger &&
-            style.display !== "none" &&
-            style.visibility !== "hidden" &&
-            bounds.width > 0 &&
-            bounds.height > 0
-          );
-        },
-        rowSelector,
-        triggerSelector,
-      ),
-    { timeout: 20_000, timeoutMsg: `Skill actions did not become visible: ${skillName}` },
-  );
   await clickWhenReady(triggerSelector);
+  await browser.waitUntil(
+    async () => (await $(triggerSelector).getAttribute("aria-expanded")) === "true",
+    { timeout: 20_000, timeoutMsg: `Skill action menu did not open: ${skillName}` },
+  );
 }
 
 async function selectMenuAction(selector) {
@@ -75,6 +55,24 @@ async function replaceRichText(selector, value) {
   );
 }
 
+async function saveSkillFile() {
+  await clickWhenReady('[data-testid="skill-save"]');
+  await browser.waitUntil(
+    () =>
+      browser.execute(() => {
+        const button = document.querySelector('[data-testid="skill-save"]');
+        const status = document.querySelector(".skill-editor-header span")?.textContent ?? "";
+        return (
+          button instanceof HTMLButtonElement &&
+          button.disabled &&
+          /已保存|Saved/.test(status) &&
+          !/保存中|Saving/.test(button.textContent ?? "")
+        );
+      }),
+    { timeout: 20_000, timeoutMsg: "Skill file save did not finish" },
+  );
+}
+
 async function waitForEditorPath(path) {
   await browser.waitUntil(async () => (await $(".skill-editor-header strong").getText()) === path, {
     timeout: 20_000,
@@ -106,7 +104,7 @@ describe("Hachimi Skills and MCP settings", () => {
       '[data-testid="skill-markdown-editor"]',
       "Desktop E2E reference loaded through SkillHost.\n",
     );
-    await clickWhenReady('[data-testid="skill-save"]');
+    await saveSkillFile();
 
     await clickWhenReady('[data-testid="skill-node-SKILL.md"]');
     await waitForEditorPath("SKILL.md");
@@ -114,7 +112,7 @@ describe("Hachimi Skills and MCP settings", () => {
       '[data-testid="skill-markdown-editor"]',
       "# Desktop E2E Skill\n\n[Reference](reference.md)\n",
     );
-    await clickWhenReady('[data-testid="skill-save"]');
+    await saveSkillFile();
     await waitForDisplayed(".skill-markdown-resource", 10_000);
     await clickWhenReady(".skill-markdown-resource summary");
     await browser.waitUntil(
@@ -139,7 +137,7 @@ describe("Hachimi Skills and MCP settings", () => {
     writeFileSync(entryPath, `${readFileSync(entryPath, "utf8")}\nExternal change.\n`, "utf8");
     await waitForDisplayed('[data-testid="skill-conflict-keep-local"]', 10_000);
     await clickWhenReady('[data-testid="skill-conflict-keep-local"]');
-    await clickWhenReady('[data-testid="skill-save"]');
+    await saveSkillFile();
 
     await browser.refresh();
     await openSettingsTab("skills");

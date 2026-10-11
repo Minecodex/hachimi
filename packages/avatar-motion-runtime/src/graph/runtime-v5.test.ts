@@ -203,9 +203,8 @@ describe("Runtime V5 transition planning", () => {
           mirrorable: true,
         }) as never,
     );
-    const graph = new AnimationGraph(
-      { entries, transitionProfiles: [profile as never] },
-      () => pose(0),
+    const graph = new AnimationGraph({ entries, transitionProfiles: [profile as never] }, () =>
+      pose(0),
     );
     graph.setFeatureIndex(
       buildMotionFeatureIndex({

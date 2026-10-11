@@ -12,7 +12,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  source-ci:
+    uses: ./.github/workflows/ci.yml
+    with:
+      full: true
+
   build-windows:
+    needs: source-ci
     runs-on: windows-latest
     timeout-minutes: 240
     steps:
@@ -55,6 +61,7 @@ jobs:
           retention-days: 14
 
   build-macos-arm64:
+    needs: source-ci
     runs-on: macos-15
     timeout-minutes: 240
     steps:

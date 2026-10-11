@@ -35,7 +35,7 @@ impl AgentStore {
         &self,
         event: &ScheduleEventContext,
     ) -> Result<ScheduleEventIngestClaim, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let source_kind = enum_to_db(&event.source.kind)?;
         let existing = sqlx::query(
             "SELECT * FROM schedule_event_ledger WHERE source_kind = ? AND source_principal = ? AND source_id = ? AND event_id = ?",

@@ -5,32 +5,28 @@ import process from "node:process";
 
 const root = resolve(import.meta.dirname, "..");
 const listed = execFileSync(
-  "rg",
+  "git",
   [
-    "--files",
+    "ls-files",
+    "-z",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "--",
     "apps",
     "crates",
     "packages",
-    "-g",
-    "*.rs",
-    "-g",
-    "*.ts",
-    "-g",
-    "*.tsx",
-    "-g",
-    "*.css",
-    "-g",
-    "!**/target/**",
-    "-g",
-    "!**/node_modules/**",
-    "-g",
-    "!packages/contracts/src/generated.ts",
   ],
   { cwd: root, encoding: "utf8" },
 )
-  .trim()
-  .split(/\r?\n/u)
-  .filter(Boolean);
+  .split("\0")
+  .filter(
+    (file) =>
+      [".rs", ".ts", ".tsx", ".css"].includes(extname(file)) &&
+      !file.includes("/target/") &&
+      !file.includes("/node_modules/") &&
+      file !== "packages/contracts/src/generated.ts",
+  );
 
 const failures = [];
 const globallyForbidden = [

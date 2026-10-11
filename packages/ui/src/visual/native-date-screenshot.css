@@ -1,0 +1,4 @@
+/* Assert the ISO value separately; Windows controls the native field text format. */
+input[type="datetime-local"]::-webkit-datetime-edit {
+  visibility: hidden;
+}

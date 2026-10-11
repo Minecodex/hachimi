@@ -80,7 +80,7 @@ impl AgentStore {
         used_plain_text_fallback: bool,
         created_at_ms: i64,
     ) -> Result<ReviewSnapshot, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM review_runs WHERE id = ?")
             .bind(review.id.as_str())
             .fetch_one(&mut *transaction)

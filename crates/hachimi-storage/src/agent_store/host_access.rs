@@ -107,7 +107,7 @@ impl AgentStore {
         let expires = now.saturating_add(ACCESS_REQUEST_LIFETIME_MS);
         let target = HostAccessTarget::Computer { app: app.clone() };
         let capabilities = vec!["observe".to_owned(), "act".to_owned()];
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         expire_host_access_requests(&mut transaction, now).await?;
         require_active_run(
             &mut transaction,
@@ -181,7 +181,7 @@ impl AgentStore {
             return Err(AgentStoreError::PersistentPrivateHostPolicyDenied);
         }
         let now = now_ms();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let current = sqlx::query("SELECT revision FROM browser_site_policies WHERE origin = ?")
             .bind(normalized_origin)
             .fetch_optional(&mut *transaction)
@@ -297,7 +297,7 @@ impl AgentStore {
             .iter()
             .map(|capability| capability_text(*capability).to_owned())
             .collect::<Vec<_>>();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         expire_host_access_requests(&mut transaction, now).await?;
         require_active_run(
             &mut transaction,
@@ -371,7 +371,7 @@ impl AgentStore {
         allow_persistent_private_network: bool,
     ) -> Result<HostAccessRequestRecord, AgentStoreError> {
         let now = now_ms();
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         expire_host_access_requests(&mut transaction, now).await?;
         let row = sqlx::query(
             "SELECT requests.*, runs.generation AS current_generation, runs.status AS run_status FROM host_access_requests AS requests INNER JOIN runs ON runs.id = requests.owner_run_id WHERE requests.id = ?",

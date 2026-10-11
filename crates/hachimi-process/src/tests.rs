@@ -68,14 +68,25 @@ fn spec(root: &Path, command: Vec<String>, tty: bool, output_limit: usize) -> Pr
 #[tokio::test]
 async fn pipe_output_is_byte_bounded_and_replayable() {
     let script = if cfg!(windows) {
-        "[Console]::Out.Write('abcde'); [Console]::Error.Write('12345')"
+        "<nul set /p =abcde & <nul set /p =12345 1>&2"
     } else {
         "printf abcde; printf 12345 1>&2"
+    };
+    let command = if cfg!(windows) {
+        vec![
+            "cmd.exe".into(),
+            "/d".into(),
+            "/q".into(),
+            "/c".into(),
+            script.into(),
+        ]
+    } else {
+        shell_script(script)
     };
     let root = tempfile::tempdir().unwrap();
     let registry = ProcessRegistry::default();
     let launched = registry
-        .spawn(spec(root.path(), shell_script(script), false, 3))
+        .spawn(spec(root.path(), command, false, 3))
         .await
         .unwrap();
     let snapshot = loop {
@@ -101,14 +112,26 @@ async fn pipe_output_is_byte_bounded_and_replayable() {
 #[tokio::test]
 async fn pty_supports_stdin_resize_and_idempotent_write() {
     let script = if cfg!(windows) {
-        "$line=[Console]::In.ReadLine(); [Console]::Out.Write(('echo:' + $line))"
+        "echo re^ady&set /p fixture_line=&echo echo:!fixture_line!"
     } else {
-        "IFS= read -r line; printf 'echo:%s' \"$line\""
+        "printf ready; IFS= read -r line; printf 'echo:%s' \"$line\""
+    };
+    let command = if cfg!(windows) {
+        vec![
+            "cmd.exe".into(),
+            "/d".into(),
+            "/q".into(),
+            "/v:on".into(),
+            "/c".into(),
+            script.into(),
+        ]
+    } else {
+        shell_script(script)
     };
     let root = tempfile::tempdir().unwrap();
     let registry = ProcessRegistry::default();
     let launched = registry
-        .spawn(spec(root.path(), shell_script(script), true, 4096))
+        .spawn(spec(root.path(), command, true, 4096))
         .await
         .unwrap();
     registry
@@ -122,6 +145,29 @@ async fn pty_supports_stdin_resize_and_idempotent_write() {
         )
         .await
         .unwrap();
+    let mut after = None;
+    let mut output = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let snapshot = registry
+                .read(&launched.id, after, None, Some(Duration::from_millis(100)))
+                .await
+                .unwrap();
+            for chunk in snapshot.chunks {
+                output.extend(STANDARD.decode(chunk.delta_base64).unwrap());
+            }
+            after = Some(snapshot.next_sequence);
+            if String::from_utf8_lossy(&output).contains("ready") {
+                break;
+            }
+            assert!(
+                !snapshot.closed,
+                "PTY fixture closed before its ready marker"
+            );
+        }
+    })
+    .await
+    .expect("PTY fixture ready marker");
     let newline = if cfg!(windows) {
         "hello\r\n"
     } else {
@@ -148,8 +194,6 @@ async fn pty_supports_stdin_resize_and_idempotent_write() {
         )
         .await
         .unwrap();
-    let mut after = None;
-    let mut output = Vec::new();
     loop {
         let snapshot = registry
             .read(&launched.id, after, None, Some(Duration::from_secs(2)))
@@ -194,8 +238,9 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
         after: &mut Option<u64>,
         output: &mut Vec<u8>,
         needle: &str,
+        budget: Duration,
     ) -> Result<(), String> {
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(budget, async {
             loop {
                 let snapshot = registry
                     .read(process_id, *after, None, Some(Duration::from_millis(500)))
@@ -300,13 +345,26 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
     let mut launch = spec(root.path(), launch_command, true, 64 * 1024);
     launch.cwd = root.path().canonicalize().expect("canonical terminal root");
     launch.environment = std::env::vars().collect();
-    launch.timeout = Some(Duration::from_secs(30));
+    launch.timeout = Some(Duration::from_secs(60));
     let launched = registry.spawn(launch).await.expect("direct terminal");
     let process_id = launched.id.clone();
     let mut after = None;
     let mut output = Vec::new();
 
     let result = async {
+        if cfg!(windows) {
+            // PowerShell initializes PSReadLine before its first prompt. Input
+            // sent during that startup can be discarded instead of executed.
+            read_until(
+                &registry,
+                &process_id,
+                &mut after,
+                &mut output,
+                "PS ",
+                Duration::from_secs(30),
+            )
+            .await?;
+        }
         write(&registry, &process_id, "cwd", cwd_probe).await?;
         read_until(
             &registry,
@@ -314,6 +372,7 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
             &mut after,
             &mut output,
             "cwd:expected-cwd",
+            Duration::from_secs(10),
         )
         .await?;
 
@@ -324,6 +383,7 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
             &mut after,
             &mut output,
             foreground_needle,
+            Duration::from_secs(10),
         )
         .await?;
         write(&registry, &process_id, "interrupt", b"\x03").await?;
@@ -335,6 +395,7 @@ async fn direct_terminal_preserves_cwd_and_ctrl_c_interrupts_foreground_command(
             &mut after,
             &mut output,
             "interrupt-ok",
+            Duration::from_secs(10),
         )
         .await?;
         write(&registry, &process_id, "exit", exit_command).await?;

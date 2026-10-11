@@ -4,7 +4,8 @@ import type {
   InteractionRegion,
 } from "@hachimi/contracts";
 import type { FootContactState, FootSoleOffsets } from "@hachimi/avatar-motion-runtime";
-import { Quaternion, Vector3, type Object3D } from "three";
+import type { Quaternion } from "three";
+import { Vector3, type Object3D } from "three";
 
 export interface PresentationRootBaseline {
   position: Vector3;
@@ -26,10 +27,7 @@ export function capturePresentationRootBaseline(root: Object3D): PresentationRoo
   };
 }
 
-export function restorePresentationRoot(
-  root: Object3D,
-  baseline: PresentationRootBaseline,
-): void {
+export function restorePresentationRoot(root: Object3D, baseline: PresentationRootBaseline): void {
   root.position.copy(baseline.position);
   root.quaternion.copy(baseline.quaternion);
   root.scale.copy(baseline.scale);

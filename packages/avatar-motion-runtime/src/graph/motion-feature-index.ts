@@ -1,4 +1,5 @@
-import { MathUtils, Quaternion, Vector2, Vector3 } from "three";
+import type { Quaternion } from "three";
+import { MathUtils, Vector2, Vector3 } from "three";
 import { measureMotionPoseSeam } from "../motion-composer";
 import type { SampledMotionPose } from "../motion-asset-library";
 import {

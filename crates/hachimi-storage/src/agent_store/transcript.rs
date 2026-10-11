@@ -19,7 +19,7 @@ impl AgentStore {
         status: ItemStatus,
         payload: ItemPayload,
     ) -> Result<TranscriptItem, AgentStoreError> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.begin_write().await?;
         let row = sqlx::query("SELECT * FROM transcript_items WHERE id = ?")
             .bind(item_id.as_str())
             .fetch_optional(&mut *transaction)

@@ -27,11 +27,11 @@
 
 ## 3. CI 矩阵
 
-现状：`.github/workflows/ci.yml:12-108` 5 个 job 全部 `runs-on: windows-latest`；`windows-release-gate.yml` 用 `[self-hosted, windows, x64]` runner。
+现状（2026-10-11）：CI 已覆盖托管 Windows x64/macOS ARM64 与共享 UI；`windows-release-gate.yml` 只在托管 Windows 构建不可变软件候选。专用 Runner、外部 staging 与正式 RC/GA 认证配置已从 Actions 移除，独立环境验收保留待验证。具体触发与 PR/完整范围见 [CI 规则](../ci.md)。
 
 - [x] `ci.yml` 增加 `macos-14`（arm64）job：rust 静态检查 + `cargo test` + CEF host 冒烟（2026-08-30 落地的最小回归网；前端测试仍由 Windows job 承担，未含 release gate）。
 - [ ] 新增 `mac-release-gate.yml`（或扩展 windows-release-gate 为多平台）：签名公证后的 dmg / portable 产物、产物 manifest、证据上传。
-- [ ] `publish-release.yml:127-138` 的 `gh release create` 资产 glob 增加 `*.dmg` / `*.app.tar.gz`。
+- [ ] 独立 RC/GA 发布流程的资产集合包含 `*.dmg` / `*.app.tar.gz`，与同一候选证据绑定。
 
 ## 4. 发布证据链对称扩展
 
@@ -45,7 +45,7 @@
 
 - [ ] gate 名与工件扩展名参数化（按平台维度建模：`{platform}_{kind}`），mac 对应 gate 定义——注意 **mac 无"标准用户 vs elevated"的等价门禁**，证据模型需要调整（设计上对齐而非硬凑）。
 - [ ] mac 安装/升级/卸载的发布门禁脚本（对标 `test-windows-release.ps1` / `test-windows-standard-user.ps1`）：干净用户安装、数据迁移、Gatekeeper 验证。
-- [ ] `external-staging-gate.yml`（self-hosted Windows）评估 mac 等价 staging 环境的可行性或显式豁免。
+- [ ] 在独立环境中评估 mac 等价 staging；真实外部环境验收不进入 GitHub Actions，环境未具备时保留待验证。
 
 ## 5. E2E 方案（风险项，需选型决策）
 
